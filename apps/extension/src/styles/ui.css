@@ -1,0 +1,68 @@
+:root {
+  font-family: 'Manrope', 'Segoe UI', sans-serif;
+  color: #1d1d1d;
+  background: #f8f6ef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.panel {
+  width: 360px;
+  min-height: 280px;
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid #ddd6c8;
+}
+
+.panel-wide {
+  width: min(720px, 100vw);
+  min-height: 100vh;
+}
+
+.kicker {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #17708b;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0.55rem 0;
+  font-size: 1.3rem;
+}
+
+.amount {
+  margin: 0.4rem 0;
+  font-size: 1.9rem;
+  color: #0d5b72;
+  font-weight: 700;
+}
+
+.subtle {
+  margin: 0;
+  color: #55504a;
+}
+
+.fineprint {
+  margin: 0.9rem 0 0;
+  font-size: 0.83rem;
+  line-height: 1.4;
+  color: #575149;
+}
+
+.options-list {
+  margin: 1rem 0 0;
+  padding-left: 1.1rem;
+}

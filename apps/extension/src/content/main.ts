@@ -1,0 +1,1 @@
+console.info('[ImongSpend] Content script ready on Shopee pages.')

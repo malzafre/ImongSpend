@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "ImongSpend",
+  "version": "0.1.0",
+  "description": "Shopee-first spending estimator for Chrome.",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://*.shopee.ph/*",
+    "https://*.shopee.com/*"
+  ],
+  "action": {
+    "default_title": "ImongSpend",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.shopee.ph/*",
+        "https://*.shopee.com/*"
+      ],
+      "js": ["assets/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

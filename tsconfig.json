@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./apps/landing" },
+    { "path": "./apps/extension" },
+    { "path": "./packages/shared" }
+  ]
+}
