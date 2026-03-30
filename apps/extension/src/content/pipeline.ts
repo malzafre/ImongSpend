@@ -29,6 +29,9 @@ const PAGE_FETCH_RESULT_EVENT = '__IMONGSPEND_PAGE_FETCH_RESULT__'
 const runtime = (globalThis as { chrome?: RuntimeLike }).chrome
 let bridgeLoadPromise: Promise<void> | null = null
 
+const ENDPOINT_GET_ALL_ORDER_AND_CHECKOUT_LIST = '/api/v4/order/get_all_order_and_checkout_list'
+const ENDPOINT_GET_ORDER_LIST = '/api/v4/order/get_order_list'
+
 export async function collectRowsViaPageBridge(maxPages: number): Promise<CollectionResult> {
   await ensurePageBridge()
 
@@ -62,6 +65,9 @@ export async function collectRowsViaPageBridge(maxPages: number): Promise<Collec
           requestId,
           maxPages,
           delayMs: 320,
+          includeOrderDetail: true,
+          detailDelayMs: 120,
+          maxDetailFetch: 80,
         },
       }),
     )
@@ -75,9 +81,14 @@ export async function collectRowsViaPageBridge(maxPages: number): Promise<Collec
     throw new Error('Page bridge returned empty payload.')
   }
 
-  const parsed = JSON.parse(payload.payload) as { orders?: unknown[]; endpoint?: string }
+  const parsed = JSON.parse(payload.payload) as {
+    orders?: unknown[]
+    endpoint?: string
+    detailAttempted?: number
+    detailEnriched?: number
+  }
   const orders = Array.isArray(parsed.orders) ? parsed.orders : []
-  const endpointLabel = parsed.endpoint ?? '/api/v4/order/get_order_list'
+  const endpointLabel = parsed.endpoint ?? ENDPOINT_GET_ALL_ORDER_AND_CHECKOUT_LIST
 
   const source: OrderSource = endpointLabel.includes('get_order_list')
     ? 'order_list'
@@ -95,19 +106,23 @@ export async function collectRowsViaPageBridge(maxPages: number): Promise<Collec
 
   return {
     rows,
-    notes: [`Data source: page-context authenticated fetch (${endpointLabel}).`],
+    notes: [
+      `Data source: page-context authenticated fetch (${endpointLabel}).`,
+      'Shipping fee, shipping discount, and payment method are not available in this list response for this account/region.',
+      'Total saved is computed from (price_before_discount - item_price) x quantity when present.',
+    ],
   }
 }
 
 export async function collectRowsViaContentApi(maxPages: number): Promise<CollectionResult> {
   const endpoints: EndpointConfig[] = [
     {
-      key: 'order_list',
-      build: (offset) => `/api/v4/order/get_order_list?limit=20&list_type=3&offset=${offset}`,
+      key: 'all_order_list',
+      build: (offset) => `${ENDPOINT_GET_ALL_ORDER_AND_CHECKOUT_LIST}?_oft=0&limit=20&offset=${offset}`,
     },
     {
-      key: 'all_order_list',
-      build: (offset) => `/api/v4/order/get_all_order_and_checkout_list?limit=20&offset=${offset}`,
+      key: 'order_list',
+      build: (offset) => `${ENDPOINT_GET_ORDER_LIST}?limit=20&list_type=3&offset=${offset}`,
     },
   ]
 

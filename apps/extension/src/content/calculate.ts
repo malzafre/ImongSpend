@@ -14,7 +14,9 @@ export function buildResearchResult(rowsInput: ResearchOrderRow[], notes: string
   })
 
   const completedRows = settledRows.filter((row) => isCompletedStatus(row.status))
+  const cancelledRows = settledRows.filter((row) => isCancelledStatus(row.status))
   const positiveSpend = sum(completedRows.map((row) => row.amount))
+  const totalSaved = sum(settledRows.map((row) => row.totalSaved))
   const totalAdjustments = sum(settledRows.map((row) => row.adjustmentAmount))
   const estimatedGrandTotal = round2(positiveSpend - totalAdjustments)
 
@@ -27,7 +29,9 @@ export function buildResearchResult(rowsInput: ResearchOrderRow[], notes: string
     generatedAt,
     orderCount: settledRows.length,
     completedCount: completedRows.length,
+    cancelledCount: cancelledRows.length,
     positiveSpend,
+    totalSaved,
     totalAdjustments,
     estimatedGrandTotal,
     from,
@@ -49,8 +53,15 @@ function normalizeAndDedupeRows(rowsInput: ResearchOrderRow[]): ResearchOrderRow
       orderId: row.orderId || 'unknown',
       orderedAt: row.orderedAt || 'unknown',
       status: row.status || 'Unknown',
+      shopName: row.shopName || 'Unknown shop',
       amount: round2(row.amount),
       adjustmentAmount: round2(row.adjustmentAmount),
+      merchandiseSubtotal: round2(row.merchandiseSubtotal),
+      shippingFee: round2(row.shippingFee),
+      shippingDiscountSubtotal: round2(row.shippingDiscountSubtotal),
+      orderTotal: round2(row.orderTotal),
+      paymentMethod: row.paymentMethod || 'Unknown',
+      totalSaved: round2(row.totalSaved),
       itemSummary: row.itemSummary || 'Order items',
     }
 

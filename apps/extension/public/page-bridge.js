@@ -11,13 +11,27 @@
   const DEFAULT_DELAY_MS = 320
 
   const endpointBuilders = [
+    (origin, offset) => `${origin}/api/v4/order/get_all_order_and_checkout_list?_oft=0&limit=20&offset=${offset}`,
     (origin, offset) => `${origin}/api/v4/order/get_order_list?limit=20&list_type=3&offset=${offset}`,
-    (origin, offset) => `${origin}/api/v4/order/get_all_order_and_checkout_list?limit=20&offset=${offset}`,
   ]
 
   const parseOrderData = (body) => {
     if (!body || typeof body !== 'object') {
       return []
+    }
+
+    const listA = body.new_data && body.new_data.order_or_checkout_data
+    if (Array.isArray(listA)) {
+      const mapped = []
+      for (const entry of listA) {
+        if (entry && typeof entry === 'object' && entry.order_list_detail && typeof entry.order_list_detail === 'object') {
+          mapped.push(entry.order_list_detail)
+        }
+      }
+
+      if (mapped.length > 0) {
+        return mapped
+      }
     }
 
     const detailsA = body.data && body.data.details_list
@@ -38,14 +52,19 @@
       return null
     }
 
-    const offsetA = body.data && body.data.next_offset
+    const offsetA = body.new_data && body.new_data.next_offset
     if (typeof offsetA === 'number' && Number.isFinite(offsetA)) {
       return offsetA
     }
 
-    const offsetB = body.data && body.data.order_data && body.data.order_data.next_offset
+    const offsetB = body.data && body.data.next_offset
     if (typeof offsetB === 'number' && Number.isFinite(offsetB)) {
       return offsetB
+    }
+
+    const offsetC = body.data && body.data.order_data && body.data.order_data.next_offset
+    if (typeof offsetC === 'number' && Number.isFinite(offsetC)) {
+      return offsetC
     }
 
     return null
@@ -67,8 +86,8 @@
       }
 
       visited.add(offset)
-
       const url = buildEndpoint(window.location.origin, offset)
+
       const response = await fetch(url, {
         credentials: 'include',
       })
@@ -112,7 +131,7 @@
 
     try {
       let orders = []
-      let endpoint = '/api/v4/order/get_order_list'
+      let endpoint = '/api/v4/order/get_all_order_and_checkout_list'
       const endpointErrors = []
 
       for (const buildEndpoint of endpointBuilders) {

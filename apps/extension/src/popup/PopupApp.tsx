@@ -142,26 +142,34 @@ export function PopupApp() {
       {result ? (
         <section className="result-shell" aria-label="Results">
           <div className="result-top">
-            <p className="subhead">Estimated Grand Total</p>
-            <p className="amount">{currency.format(result.estimatedGrandTotal)}</p>
+            <p className="subhead">Total Spent (Final Total)</p>
+            <p className="amount">{currency.format(result.positiveSpend)}</p>
           </div>
 
           <div className="stats-grid">
+            <article className="stat-chip">
+              <p>Total orders scanned</p>
+              <strong>{result.orderCount.toLocaleString()}</strong>
+            </article>
             <article className="stat-chip">
               <p>Completed orders</p>
               <strong>{result.completedCount.toLocaleString()}</strong>
             </article>
             <article className="stat-chip">
-              <p>Scanned orders</p>
-              <strong>{result.orderCount.toLocaleString()}</strong>
+              <p>Cancelled orders</p>
+              <strong>{result.cancelledCount.toLocaleString()}</strong>
             </article>
             <article className="stat-chip">
-              <p>Positive spend</p>
-              <strong>{currency.format(result.positiveSpend)}</strong>
+              <p>Total saved</p>
+              <strong>{currency.format(result.totalSaved)}</strong>
             </article>
             <article className="stat-chip">
               <p>Adjustments</p>
               <strong>{currency.format(result.totalAdjustments)}</strong>
+            </article>
+            <article className="stat-chip">
+              <p>Merchandise subtotal</p>
+              <strong>{currency.format(sumRows(result.rows.map((row) => row.merchandiseSubtotal)))}</strong>
             </article>
           </div>
 
@@ -331,13 +339,21 @@ async function ensureContentScriptInjected(
 
 function resultToCsv(result: ResearchCalculationResult): string {
   const lines: string[] = []
-  lines.push('order_id,ordered_at,status,amount,adjustment,item_summary')
+  lines.push(
+    'order_id,ordered_at,status,shop_name,merchandise_subtotal,shipping_fee,shipping_discount_subtotal,order_total,payment_method,amount,adjustment,item_summary',
+  )
 
   for (const row of result.rows) {
     const cols = [
       row.orderId,
       row.orderedAt,
       row.status,
+      row.shopName,
+      row.merchandiseSubtotal.toFixed(2),
+      row.shippingFee.toFixed(2),
+      row.shippingDiscountSubtotal.toFixed(2),
+      row.orderTotal.toFixed(2),
+      row.paymentMethod,
       row.amount.toFixed(2),
       row.adjustmentAmount.toFixed(2),
       row.itemSummary,
@@ -347,9 +363,11 @@ function resultToCsv(result: ResearchCalculationResult): string {
 
   lines.push('')
   lines.push(`"positive_spend",${result.positiveSpend.toFixed(2)}`)
+  lines.push(`"total_saved",${result.totalSaved.toFixed(2)}`)
   lines.push(`"total_adjustments",${result.totalAdjustments.toFixed(2)}`)
   lines.push(`"estimated_grand_total",${result.estimatedGrandTotal.toFixed(2)}`)
   lines.push(`"completed_count",${result.completedCount}`)
+  lines.push(`"cancelled_count",${result.cancelledCount}`)
   lines.push(`"order_count",${result.orderCount}`)
 
   return lines.join('\n')
@@ -420,4 +438,9 @@ function formatDate(iso: string): string {
     month: 'short',
     day: '2-digit',
   })
+}
+
+function sumRows(values: number[]): number {
+  const total = values.reduce((acc, value) => acc + value, 0)
+  return Math.round(total * 100) / 100
 }

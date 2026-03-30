@@ -13,11 +13,13 @@ export function mapOrderToRow(order: OrderLike, source: OrderSource = 'unknown')
 
   const status =
     toStringValue(getByPath(order, 'status.list_view_status_label.text')) ??
+    toStringValue(getByPath(order, 'status.status_label.text')) ??
     toStringValue(getByPath(order, 'status.status_label')) ??
-    'Unknown'
+    'unknown_status'
 
   const amountRaw =
     toNumber(getByPath(order, 'info_card.final_total')) ??
+    toNumber(getByPath(order, 'final_total')) ??
     toNumber(getByPath(order, 'total')) ??
     0
 
@@ -28,22 +30,84 @@ export function mapOrderToRow(order: OrderLike, source: OrderSource = 'unknown')
     toNumber(getByPath(order, 'refunded_amount')) ??
     0
 
+  const shopName =
+    toStringValue(getByPath(order, 'info_card.order_list_cards.0.shop_info.shop_name')) ??
+    toStringValue(getByPath(order, 'shop_info.shop_name')) ??
+    toStringValue(getByPath(order, 'shop_name')) ??
+    'Unknown shop'
+
   const itemSummary =
     toStringValue(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.name')) ??
     toStringValue(getByPath(order, 'item_brief.item_name')) ??
     'Order items'
 
+  const itemPriceRaw =
+    toNumber(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.item_price')) ??
+    toNumber(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.order_price')) ??
+    0
+
+  const priceBeforeDiscountRaw =
+    toNumber(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.price_before_discount')) ??
+    toNumber(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.original_price')) ??
+    0
+
+  const quantity =
+    toNumber(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.amount')) ?? 1
+
+  const subtotalRaw =
+    toNumber(getByPath(order, 'info_card.subtotal')) ??
+    toNumber(getByPath(order, 'subtotal')) ??
+    0
+
+  const orderTotal = toShopeeMoney(amountRaw, source)
+  const subtotal = toShopeeMoney(subtotalRaw, source)
+  const unitPaid = toShopeeMoney(itemPriceRaw, source)
+  const unitOriginal = toShopeeMoney(priceBeforeDiscountRaw, source)
+  const normalizedQuantity = Math.max(1, Math.floor(quantity))
+
+  const merchandiseSubtotal = subtotal > 0 ? subtotal : round2(unitPaid * normalizedQuantity)
+  const totalSaved = unitOriginal > 0 && unitPaid > 0
+    ? round2(Math.max(0, (unitOriginal - unitPaid) * normalizedQuantity))
+    : 0
+
   return {
     orderId,
     orderedAt: resolveOrderedAt(order),
     status,
-    amount: toShopeeMoney(amountRaw, source),
+    shopName,
+    amount: orderTotal,
     adjustmentAmount: toShopeeMoney(refundRaw, source),
+    merchandiseSubtotal,
+    shippingFee: 0,
+    shippingDiscountSubtotal: 0,
+    orderTotal,
+    paymentMethod: 'Not available in list endpoint',
+    totalSaved,
     itemSummary,
   }
 }
 
 export function extractDetails(body: Record<string, unknown>): OrderLike[] {
+  const allOrderList = getByPath(body, 'new_data.order_or_checkout_data')
+  if (Array.isArray(allOrderList)) {
+    const mapped = allOrderList
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object') {
+          return null
+        }
+
+        const orderListDetail = (entry as Record<string, unknown>).order_list_detail
+        return orderListDetail && typeof orderListDetail === 'object'
+          ? orderListDetail as OrderLike
+          : null
+      })
+      .filter((entry): entry is OrderLike => entry !== null)
+
+    if (mapped.length > 0) {
+      return mapped
+    }
+  }
+
   const firstPath = getByPath(body, 'data.details_list')
   if (Array.isArray(firstPath)) {
     return firstPath as OrderLike[]
@@ -58,6 +122,11 @@ export function extractDetails(body: Record<string, unknown>): OrderLike[] {
 }
 
 export function extractNextOffset(body: Record<string, unknown>): number | null {
+  const newOffset = toNumber(getByPath(body, 'new_data.next_offset'))
+  if (newOffset !== null) {
+    return newOffset
+  }
+
   const first = toNumber(getByPath(body, 'data.next_offset'))
   if (first !== null) {
     return first
@@ -67,11 +136,11 @@ export function extractNextOffset(body: Record<string, unknown>): number | null 
 }
 
 export function isCompletedStatus(status: string): boolean {
-  return /(completed|complete|received|delivered)/i.test(status)
+  return /(label_completed|completed|complete|received|delivered)/i.test(status)
 }
 
 export function isCancelledStatus(status: string): boolean {
-  return /(cancelled|canceled|cancel)/i.test(status)
+  return /(label_cancelled|label_canceled|cancelled|canceled|cancel)/i.test(status)
 }
 
 function resolveOrderedAt(order: OrderLike): string {
