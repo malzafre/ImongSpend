@@ -6,19 +6,38 @@ export type OrderSource = 'order_list' | 'all_order_list' | 'unknown'
 const SHOPEE_MONEY_DIVISOR = 100_000
 
 export function mapOrderToRow(order: OrderLike, source: OrderSource = 'unknown'): ResearchOrderRow {
+  const detail = getByPath(order, '__detail')
+  const detailRecord = detail && typeof detail === 'object' ? (detail as Record<string, unknown>) : null
+
   const orderId =
     toStringValue(getByPath(order, 'info_card.order_id')) ??
+    toStringValue(getByPath(detailRecord, 'info_card.parcel_cards.0.order_id')) ??
     toStringValue(getByPath(order, 'order_id')) ??
     'unknown'
 
   const status =
     toStringValue(getByPath(order, 'status.list_view_status_label.text')) ??
+    toStringValue(getByPath(detailRecord, 'status.list_view_status_label.text')) ??
     toStringValue(getByPath(order, 'status.status_label.text')) ??
     toStringValue(getByPath(order, 'status.status_label')) ??
     'unknown_status'
 
-  const amountRaw =
+  const shopName =
+    toStringValue(getByPath(order, 'info_card.order_list_cards.0.shop_info.shop_name')) ??
+    toStringValue(getByPath(detailRecord, 'info_card.parcel_cards.0.shop_info.shop_name')) ??
+    toStringValue(getByPath(order, 'shop_info.shop_name')) ??
+    toStringValue(getByPath(order, 'shop_name')) ??
+    'Unknown shop'
+
+  const itemSummary =
+    toStringValue(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.name')) ??
+    toStringValue(getByPath(detailRecord, 'info_card.parcel_cards.0.product_info.item_groups.0.items.0.name')) ??
+    toStringValue(getByPath(order, 'item_brief.item_name')) ??
+    'Order items'
+
+  const orderTotalRaw =
     toNumber(getByPath(order, 'info_card.final_total')) ??
+    toNumber(getByPath(detailRecord, 'info_card.final_total')) ??
     toNumber(getByPath(order, 'final_total')) ??
     toNumber(getByPath(order, 'total')) ??
     0
@@ -30,61 +49,272 @@ export function mapOrderToRow(order: OrderLike, source: OrderSource = 'unknown')
     toNumber(getByPath(order, 'refunded_amount')) ??
     0
 
-  const shopName =
-    toStringValue(getByPath(order, 'info_card.order_list_cards.0.shop_info.shop_name')) ??
-    toStringValue(getByPath(order, 'shop_info.shop_name')) ??
-    toStringValue(getByPath(order, 'shop_name')) ??
-    'Unknown shop'
-
-  const itemSummary =
-    toStringValue(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.name')) ??
-    toStringValue(getByPath(order, 'item_brief.item_name')) ??
-    'Order items'
-
-  const itemPriceRaw =
-    toNumber(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.item_price')) ??
-    toNumber(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.order_price')) ??
-    0
-
-  const priceBeforeDiscountRaw =
-    toNumber(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.price_before_discount')) ??
-    toNumber(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.original_price')) ??
-    0
-
-  const quantity =
-    toNumber(getByPath(order, 'info_card.order_list_cards.0.product_info.item_groups.0.items.0.amount')) ?? 1
-
-  const subtotalRaw =
+  const fallbackSubtotalRaw =
     toNumber(getByPath(order, 'info_card.subtotal')) ??
+    toNumber(getByPath(detailRecord, 'info_card.subtotal')) ??
     toNumber(getByPath(order, 'subtotal')) ??
     0
 
-  const orderTotal = toShopeeMoney(amountRaw, source)
-  const subtotal = toShopeeMoney(subtotalRaw, source)
-  const unitPaid = toShopeeMoney(itemPriceRaw, source)
-  const unitOriginal = toShopeeMoney(priceBeforeDiscountRaw, source)
-  const normalizedQuantity = Math.max(1, Math.floor(quantity))
+  const rowFromDetail = parseDetailFinancial(detailRecord, source)
 
-  const merchandiseSubtotal = subtotal > 0 ? subtotal : round2(unitPaid * normalizedQuantity)
-  const totalSaved = unitOriginal > 0 && unitPaid > 0
-    ? round2(Math.max(0, (unitOriginal - unitPaid) * normalizedQuantity))
-    : 0
+  const rowFromList = parseListFinancial(order, source)
+
+  const orderTotal = toShopeeMoney(orderTotalRaw, source)
+  const merchandiseSubtotal = rowFromDetail.merchandiseSubtotal > 0
+    ? rowFromDetail.merchandiseSubtotal
+    : rowFromList.merchandiseSubtotal > 0
+      ? rowFromList.merchandiseSubtotal
+      : toShopeeMoney(fallbackSubtotalRaw, source)
+
+  const hasDetail = detailRecord !== null
+  const shippingFee = hasDetail
+    ? rowFromDetail.shippingFee
+    : inferShippingFeeFromList(order, source)
+  const shippingDiscountSubtotal = hasDetail
+    ? rowFromDetail.shippingDiscountSubtotal
+    : inferShippingDiscountFromList(order, source)
+  const paymentMethod = hasDetail
+    ? rowFromDetail.paymentMethod
+    : inferPaymentMethodFromList(order)
+  const totalSaved = rowFromDetail.totalSaved > 0
+    ? rowFromDetail.totalSaved
+    : inferTotalSavedFromList(order, source, rowFromList.totalSaved)
 
   return {
     orderId,
-    orderedAt: resolveOrderedAt(order),
+    orderedAt: resolveOrderedAt(order, detailRecord),
     status,
     shopName,
     amount: orderTotal,
     adjustmentAmount: toShopeeMoney(refundRaw, source),
     merchandiseSubtotal,
-    shippingFee: 0,
-    shippingDiscountSubtotal: 0,
+    shippingFee,
+    shippingDiscountSubtotal,
     orderTotal,
-    paymentMethod: 'Not available in list endpoint',
+    paymentMethod,
     totalSaved,
     itemSummary,
   }
+}
+
+type ParsedFinancial = {
+  merchandiseSubtotal: number
+  shippingFee: number
+  shippingDiscountSubtotal: number
+  paymentMethod: string
+  totalSaved: number
+}
+
+function parseDetailFinancial(detail: Record<string, unknown> | null, source: OrderSource): ParsedFinancial {
+  if (!detail) {
+    return {
+      merchandiseSubtotal: 0,
+      shippingFee: 0,
+      shippingDiscountSubtotal: 0,
+      paymentMethod: 'Not available in list endpoint',
+      totalSaved: 0,
+    }
+  }
+
+  const infoRows = getByPath(detail, 'info_card.parcel_cards.0.payment_info.info_rows')
+  const parsedInfoRows = Array.isArray(infoRows) ? parsePaymentInfoRows(infoRows, source) : null
+
+  const merchandiseSubtotal = parsedInfoRows?.merchandiseSubtotal ??
+    toShopeeMoney(
+      toNumber(getByPath(detail, 'info_card.subtotal')) ?? 0,
+      source,
+    )
+
+  const shippingFee = parsedInfoRows?.shippingFee ?? 0
+  const shippingDiscountSubtotal = parsedInfoRows?.shippingDiscountSubtotal ?? 0
+  const totalSavedFromVoucherRows = parsedInfoRows?.totalSaved ?? 0
+
+  const paymentMethod =
+    toStringValue(getByPath(detail, 'payment_method.payment_channel_name.text')) ??
+    toStringValue(getByPath(detail, 'payment_method.payment_channel_name')) ??
+    toStringValue(getByPath(detail, 'payment_method.payment_method_name')) ??
+    'Not available in list endpoint'
+
+  const listComputedSavings = computeSavingsFromItemRows(detail, source)
+
+  return {
+    merchandiseSubtotal,
+    shippingFee,
+    shippingDiscountSubtotal,
+    paymentMethod,
+    totalSaved: round2(totalSavedFromVoucherRows + listComputedSavings),
+  }
+}
+
+function parseListFinancial(order: Record<string, unknown>, source: OrderSource): ParsedFinancial {
+  const subtotalRaw =
+    toNumber(getByPath(order, 'info_card.subtotal')) ??
+    toNumber(getByPath(order, 'subtotal')) ??
+    0
+
+  return {
+    merchandiseSubtotal: toShopeeMoney(subtotalRaw, source),
+    shippingFee: inferShippingFeeFromList(order, source),
+    shippingDiscountSubtotal: inferShippingDiscountFromList(order, source),
+    paymentMethod: inferPaymentMethodFromList(order),
+    totalSaved: computeSavingsFromItemRows(order, source),
+  }
+}
+
+function inferTotalSavedFromList(order: Record<string, unknown>, source: OrderSource, fallback: number): number {
+  const listSaved =
+    toNumber(getByPath(order, 'saving_total')) ??
+    toNumber(getByPath(order, 'price_info.total_saved')) ??
+    toNumber(getByPath(order, 'price_info.saving_total'))
+
+  if (listSaved !== null) {
+    return Math.max(0, toShopeeMoney(listSaved, source))
+  }
+
+  return Math.max(0, fallback)
+}
+
+function inferShippingFeeFromList(order: Record<string, unknown>, source: OrderSource): number {
+  const shippingRaw =
+    toNumber(getByPath(order, 'price_info.shipping_fee')) ??
+    toNumber(getByPath(order, 'price_info.shipping_amount')) ??
+    toNumber(getByPath(order, 'shipping.shipping_fee')) ??
+    toNumber(getByPath(order, 'shipping_fee'))
+
+  if (shippingRaw === null) {
+    return 0
+  }
+
+  return Math.max(0, toShopeeMoney(shippingRaw, source))
+}
+
+function inferShippingDiscountFromList(order: Record<string, unknown>, source: OrderSource): number {
+  const discountRaw =
+    toNumber(getByPath(order, 'price_info.shipping_discount_subtotal')) ??
+    toNumber(getByPath(order, 'price_info.shipping_discount')) ??
+    toNumber(getByPath(order, 'shipping.shipping_discount')) ??
+    toNumber(getByPath(order, 'shipping_discount_subtotal'))
+
+  if (discountRaw === null) {
+    return 0
+  }
+
+  return Math.abs(toShopeeMoney(discountRaw, source))
+}
+
+function inferPaymentMethodFromList(order: Record<string, unknown>): string {
+  const candidate =
+    toStringValue(getByPath(order, 'payment_method.payment_channel_name.text')) ??
+    toStringValue(getByPath(order, 'payment_method.payment_channel_name')) ??
+    toStringValue(getByPath(order, 'payment_method.payment_method_name')) ??
+    toStringValue(getByPath(order, 'payment_method.method_name')) ??
+    toStringValue(getByPath(order, 'payment_method_name'))
+
+  return candidate ?? 'Not available in list endpoint'
+}
+
+function computeSavingsFromItemRows(sourceObject: Record<string, unknown>, source: OrderSource): number {
+  const rows = extractItems(sourceObject)
+  let total = 0
+
+  for (const item of rows) {
+    const itemPriceRaw = toNumber(getByPath(item, 'item_price'))
+    const beforeRaw =
+      toNumber(getByPath(item, 'price_before_discount')) ??
+      toNumber(getByPath(item, 'original_price'))
+    const qty = toNumber(getByPath(item, 'amount')) ?? 1
+
+    if (itemPriceRaw === null || beforeRaw === null) {
+      continue
+    }
+
+    const itemPrice = toShopeeMoney(itemPriceRaw, source)
+    const before = toShopeeMoney(beforeRaw, source)
+    const quantity = Math.max(1, Math.floor(qty))
+    const saved = (before - itemPrice) * quantity
+
+    if (saved > 0) {
+      total += saved
+    }
+  }
+
+  return round2(total)
+}
+
+type ParsedInfoRows = {
+  merchandiseSubtotal: number
+  shippingFee: number
+  shippingDiscountSubtotal: number
+  totalSaved: number
+}
+
+function parsePaymentInfoRows(rows: unknown[], source: OrderSource): ParsedInfoRows {
+  let merchandiseSubtotal = 0
+  let shippingFee = 0
+  let shippingDiscountSubtotal = 0
+  let totalSaved = 0
+
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') {
+      continue
+    }
+
+    const label =
+      toStringValue(getByPath(row, 'info_label.text'))?.toLowerCase() ??
+      toStringValue(getByPath(row, 'info_label'))?.toLowerCase() ??
+      ''
+
+    const valueRaw = toNumber(getByPath(row, 'info_value.value'))
+    if (valueRaw === null) {
+      continue
+    }
+
+    const value = toShopeeMoney(valueRaw, source)
+
+    if (label.includes('merchandise_subtotal')) {
+      merchandiseSubtotal = Math.max(merchandiseSubtotal, value)
+      continue
+    }
+
+    if (label.includes('shipping_discount_subtotal')) {
+      shippingDiscountSubtotal += Math.abs(value)
+      totalSaved += Math.abs(value)
+      continue
+    }
+
+    if (label.includes('shipping') && !label.includes('discount')) {
+      shippingFee += Math.abs(value)
+      continue
+    }
+
+    if (label.includes('voucher') || label.includes('discount') || label.includes('coins')) {
+      totalSaved += Math.abs(value)
+    }
+  }
+
+  return {
+    merchandiseSubtotal: round2(merchandiseSubtotal),
+    shippingFee: round2(shippingFee),
+    shippingDiscountSubtotal: round2(shippingDiscountSubtotal),
+    totalSaved: round2(totalSaved),
+  }
+}
+
+function extractItems(sourceObject: Record<string, unknown>): Record<string, unknown>[] {
+  const paths = [
+    'info_card.order_list_cards.0.product_info.item_groups.0.items',
+    'info_card.parcel_cards.0.product_info.item_groups.0.items',
+    'product_info.item_groups.0.items',
+  ]
+
+  for (const path of paths) {
+    const candidate = getByPath(sourceObject, path)
+    if (Array.isArray(candidate)) {
+      return candidate.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object'))
+    }
+  }
+
+  return []
 }
 
 export function extractDetails(body: Record<string, unknown>): OrderLike[] {
@@ -143,21 +373,75 @@ export function isCancelledStatus(status: string): boolean {
   return /(label_cancelled|label_canceled|cancelled|canceled|cancel)/i.test(status)
 }
 
-function resolveOrderedAt(order: OrderLike): string {
+function resolveOrderedAt(order: OrderLike, detail: Record<string, unknown> | null): string {
+  const completedUnix = findUnixTimestampByLabel(detail, 'completed_time')
+  if (completedUnix !== null) {
+    const completedIso = unixToIso(completedUnix)
+    if (completedIso) {
+      return completedIso
+    }
+  }
+
+  const orderUnix = findUnixTimestampByLabel(detail, 'order_time')
+  if (orderUnix !== null) {
+    const orderIso = unixToIso(orderUnix)
+    if (orderIso) {
+      return orderIso
+    }
+  }
+
   const epoch =
     toNumber(getByPath(order, 'ctime')) ??
     toNumber(getByPath(order, 'info_card.create_time')) ??
     toNumber(getByPath(order, 'shipping.tracking_info.ctime'))
 
   if (epoch !== null) {
-    const milliseconds = epoch > 9_999_999_999 ? epoch : epoch * 1000
-    const parsed = new Date(milliseconds)
-    if (!Number.isNaN(parsed.getTime())) {
-      return parsed.toISOString()
+    const fallbackIso = unixToIso(epoch)
+    if (fallbackIso) {
+      return fallbackIso
     }
   }
 
   return 'unknown'
+}
+
+function findUnixTimestampByLabel(detail: Record<string, unknown> | null, keyword: string): number | null {
+  if (!detail) {
+    return null
+  }
+
+  const rows = getByPath(detail, 'processing_info.info_rows')
+  if (!Array.isArray(rows)) {
+    return null
+  }
+
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') {
+      continue
+    }
+
+    const label = toStringValue(getByPath(row, 'info_label.text'))?.toLowerCase() ?? ''
+    if (!label.includes(keyword)) {
+      continue
+    }
+
+    const raw = toNumber(getByPath(row, 'info_value.value'))
+    if (raw !== null) {
+      return raw
+    }
+  }
+
+  return null
+}
+
+function unixToIso(unix: number): string | null {
+  const milliseconds = unix > 9_999_999_999 ? unix : unix * 1000
+  const parsed = new Date(milliseconds)
+  if (Number.isNaN(parsed.getTime())) {
+    return null
+  }
+
+  return parsed.toISOString()
 }
 
 function toShopeeMoney(value: number, source: OrderSource): number {

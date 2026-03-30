@@ -340,7 +340,7 @@ async function ensureContentScriptInjected(
 function resultToCsv(result: ResearchCalculationResult): string {
   const lines: string[] = []
   lines.push(
-    'order_id,ordered_at,status,shop_name,merchandise_subtotal,shipping_fee,shipping_discount_subtotal,order_total,payment_method,amount,adjustment,item_summary',
+    'order_id,ordered_at,status,shop_name,merchandise_subtotal,shipping_fee,shipping_discount_subtotal,order_total,payment_method,total_saved,amount,adjustment,item_summary',
   )
 
   for (const row of result.rows) {
@@ -354,6 +354,7 @@ function resultToCsv(result: ResearchCalculationResult): string {
       row.shippingDiscountSubtotal.toFixed(2),
       row.orderTotal.toFixed(2),
       row.paymentMethod,
+      row.totalSaved.toFixed(2),
       row.amount.toFixed(2),
       row.adjustmentAmount.toFixed(2),
       row.itemSummary,
