@@ -8,6 +8,7 @@ export interface ResearchOrderRow {
   merchandiseSubtotal: number
   shippingFee: number
   shippingDiscountSubtotal: number
+  shopVoucherDiscount: number
   orderTotal: number
   paymentMethod: string
   totalSaved: number

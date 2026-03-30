@@ -59,6 +59,7 @@ function normalizeAndDedupeRows(rowsInput: ResearchOrderRow[]): ResearchOrderRow
       merchandiseSubtotal: round2(row.merchandiseSubtotal),
       shippingFee: round2(row.shippingFee),
       shippingDiscountSubtotal: round2(row.shippingDiscountSubtotal),
+      shopVoucherDiscount: round2(row.shopVoucherDiscount),
       orderTotal: round2(row.orderTotal),
       paymentMethod: row.paymentMethod || 'Unknown',
       totalSaved: round2(row.totalSaved),

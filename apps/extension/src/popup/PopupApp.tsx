@@ -422,7 +422,7 @@ async function ensureContentScriptInjected(
 function resultToCsv(result: ResearchCalculationResult): string {
   const lines: string[] = []
   lines.push(
-    'order_id,ordered_at,status,shop_name,merchandise_subtotal,shipping_fee,shipping_discount_subtotal,order_total,payment_method,total_saved,amount,adjustment,item_summary',
+    'order_id,ordered_at,status,shop_name,merchandise_subtotal,shipping_fee,shipping_discount_subtotal,shop_voucher_discount,order_total,payment_method,total_saved,amount,item_summary',
   )
 
   for (const row of result.rows) {
@@ -434,11 +434,11 @@ function resultToCsv(result: ResearchCalculationResult): string {
       row.merchandiseSubtotal.toFixed(2),
       row.shippingFee.toFixed(2),
       row.shippingDiscountSubtotal.toFixed(2),
+      row.shopVoucherDiscount.toFixed(2),
       row.orderTotal.toFixed(2),
       row.paymentMethod,
       row.totalSaved.toFixed(2),
       row.amount.toFixed(2),
-      row.adjustmentAmount.toFixed(2),
       row.itemSummary,
     ]
     lines.push(cols.map(escapeCsv).join(','))
@@ -508,6 +508,7 @@ function mergeRowsWithDetails(rows: ResearchOrderRow[], enrichedRows: ResearchOr
       merchandiseSubtotal: enriched.merchandiseSubtotal,
       shippingFee: enriched.shippingFee,
       shippingDiscountSubtotal: enriched.shippingDiscountSubtotal,
+      shopVoucherDiscount: enriched.shopVoucherDiscount,
       paymentMethod: enriched.paymentMethod,
       totalSaved: enriched.totalSaved,
       itemSummary: enriched.itemSummary,

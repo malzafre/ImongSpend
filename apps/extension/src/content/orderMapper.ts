@@ -73,12 +73,29 @@ export function mapOrderToRow(order: OrderLike, source: OrderSource = 'unknown')
   const shippingDiscountSubtotal = hasDetail
     ? rowFromDetail.shippingDiscountSubtotal
     : inferShippingDiscountFromList(order, source)
+  const shopVoucherDiscount = hasDetail
+    ? rowFromDetail.shopVoucherDiscount
+    : inferShopVoucherDiscountFromList(order, source)
   const paymentMethod = hasDetail
     ? rowFromDetail.paymentMethod
     : inferPaymentMethodFromList(order)
-  const totalSaved = rowFromDetail.totalSaved > 0
-    ? rowFromDetail.totalSaved
-    : inferTotalSavedFromList(order, source, rowFromList.totalSaved)
+  const totalSaved = hasDetail
+    ? resolveTotalSaved({
+        merchandiseSubtotal,
+        shippingFee,
+        shippingDiscountSubtotal,
+        shopVoucherDiscount,
+        orderTotal,
+        explicitDiscountSubtotal: rowFromDetail.discountSubtotal,
+        fallback: Math.max(rowFromDetail.totalSaved, rowFromList.totalSaved),
+      })
+    : inferTotalSavedFromList(order, source, rowFromList.totalSaved, {
+        merchandiseSubtotal,
+        shippingFee,
+        shippingDiscountSubtotal,
+        shopVoucherDiscount,
+        orderTotal,
+      })
 
   return {
     orderId,
@@ -90,6 +107,7 @@ export function mapOrderToRow(order: OrderLike, source: OrderSource = 'unknown')
     merchandiseSubtotal,
     shippingFee,
     shippingDiscountSubtotal,
+    shopVoucherDiscount,
     orderTotal,
     paymentMethod,
     totalSaved,
@@ -101,8 +119,18 @@ type ParsedFinancial = {
   merchandiseSubtotal: number
   shippingFee: number
   shippingDiscountSubtotal: number
+  shopVoucherDiscount: number
+  discountSubtotal: number
   paymentMethod: string
   totalSaved: number
+}
+
+type KnownOrderAmounts = {
+  merchandiseSubtotal: number
+  shippingFee: number
+  shippingDiscountSubtotal: number
+  shopVoucherDiscount: number
+  orderTotal: number
 }
 
 function parseDetailFinancial(detail: Record<string, unknown> | null, source: OrderSource): ParsedFinancial {
@@ -111,6 +139,8 @@ function parseDetailFinancial(detail: Record<string, unknown> | null, source: Or
       merchandiseSubtotal: 0,
       shippingFee: 0,
       shippingDiscountSubtotal: 0,
+      shopVoucherDiscount: 0,
+      discountSubtotal: 0,
       paymentMethod: 'Not available in list endpoint',
       totalSaved: 0,
     }
@@ -127,7 +157,8 @@ function parseDetailFinancial(detail: Record<string, unknown> | null, source: Or
 
   const shippingFee = parsedInfoRows?.shippingFee ?? 0
   const shippingDiscountSubtotal = parsedInfoRows?.shippingDiscountSubtotal ?? 0
-  const totalSavedFromVoucherRows = parsedInfoRows?.totalSaved ?? 0
+  const shopVoucherDiscount = parsedInfoRows?.shopVoucherDiscount ?? 0
+  const discountSubtotal = parsedInfoRows?.discountSubtotal ?? 0
 
   const paymentMethod =
     toStringValue(getByPath(detail, 'payment_method.payment_channel_name.text')) ??
@@ -141,8 +172,10 @@ function parseDetailFinancial(detail: Record<string, unknown> | null, source: Or
     merchandiseSubtotal,
     shippingFee,
     shippingDiscountSubtotal,
+    shopVoucherDiscount,
+    discountSubtotal,
     paymentMethod,
-    totalSaved: round2(totalSavedFromVoucherRows + listComputedSavings),
+    totalSaved: listComputedSavings,
   }
 }
 
@@ -156,22 +189,34 @@ function parseListFinancial(order: Record<string, unknown>, source: OrderSource)
     merchandiseSubtotal: toShopeeMoney(subtotalRaw, source),
     shippingFee: inferShippingFeeFromList(order, source),
     shippingDiscountSubtotal: inferShippingDiscountFromList(order, source),
+    shopVoucherDiscount: inferShopVoucherDiscountFromList(order, source),
+    discountSubtotal: 0,
     paymentMethod: inferPaymentMethodFromList(order),
     totalSaved: computeSavingsFromItemRows(order, source),
   }
 }
 
-function inferTotalSavedFromList(order: Record<string, unknown>, source: OrderSource, fallback: number): number {
+function inferTotalSavedFromList(
+  order: Record<string, unknown>,
+  source: OrderSource,
+  fallback: number,
+  knownAmounts: KnownOrderAmounts,
+): number {
   const listSaved =
     toNumber(getByPath(order, 'saving_total')) ??
     toNumber(getByPath(order, 'price_info.total_saved')) ??
     toNumber(getByPath(order, 'price_info.saving_total'))
 
+  const computed = resolveTotalSaved({
+    ...knownAmounts,
+    fallback,
+  })
+
   if (listSaved !== null) {
-    return Math.max(0, toShopeeMoney(listSaved, source))
+    return Math.max(0, toShopeeMoney(listSaved, source), computed)
   }
 
-  return Math.max(0, fallback)
+  return computed
 }
 
 function inferShippingFeeFromList(order: Record<string, unknown>, source: OrderSource): number {
@@ -200,6 +245,23 @@ function inferShippingDiscountFromList(order: Record<string, unknown>, source: O
   }
 
   return Math.abs(toShopeeMoney(discountRaw, source))
+}
+
+function inferShopVoucherDiscountFromList(order: Record<string, unknown>, source: OrderSource): number {
+  const voucherRaw =
+    toNumber(getByPath(order, 'price_info.shop_voucher_discount')) ??
+    toNumber(getByPath(order, 'price_info.shop_voucher_subtotal')) ??
+    toNumber(getByPath(order, 'price_info.shop_voucher')) ??
+    toNumber(getByPath(order, 'price_info.seller_voucher_discount')) ??
+    toNumber(getByPath(order, 'price_info.seller_voucher_subtotal')) ??
+    toNumber(getByPath(order, 'voucher_info.shop_voucher_discount')) ??
+    toNumber(getByPath(order, 'shop_voucher_discount'))
+
+  if (voucherRaw === null) {
+    return 0
+  }
+
+  return Math.abs(toShopeeMoney(voucherRaw, source))
 }
 
 function inferPaymentMethodFromList(order: Record<string, unknown>): string {
@@ -245,14 +307,16 @@ type ParsedInfoRows = {
   merchandiseSubtotal: number
   shippingFee: number
   shippingDiscountSubtotal: number
-  totalSaved: number
+  shopVoucherDiscount: number
+  discountSubtotal: number
 }
 
 function parsePaymentInfoRows(rows: unknown[], source: OrderSource): ParsedInfoRows {
   let merchandiseSubtotal = 0
   let shippingFee = 0
   let shippingDiscountSubtotal = 0
-  let totalSaved = 0
+  let shopVoucherDiscount = 0
+  let discountSubtotal = 0
 
   for (const row of rows) {
     if (!row || typeof row !== 'object') {
@@ -278,17 +342,23 @@ function parsePaymentInfoRows(rows: unknown[], source: OrderSource): ParsedInfoR
 
     if (label.includes('shipping_discount_subtotal')) {
       shippingDiscountSubtotal += Math.abs(value)
-      totalSaved += Math.abs(value)
+      discountSubtotal += Math.abs(value)
       continue
     }
 
-    if (label.includes('shipping') && !label.includes('discount')) {
+    if (label.includes('shipping') && !label.includes('discount') && !label.includes('voucher')) {
       shippingFee += Math.abs(value)
       continue
     }
 
+    if (isShopVoucherLabel(label)) {
+      shopVoucherDiscount += Math.abs(value)
+      discountSubtotal += Math.abs(value)
+      continue
+    }
+
     if (label.includes('voucher') || label.includes('discount') || label.includes('coins')) {
-      totalSaved += Math.abs(value)
+      discountSubtotal += Math.abs(value)
     }
   }
 
@@ -296,8 +366,43 @@ function parsePaymentInfoRows(rows: unknown[], source: OrderSource): ParsedInfoR
     merchandiseSubtotal: round2(merchandiseSubtotal),
     shippingFee: round2(shippingFee),
     shippingDiscountSubtotal: round2(shippingDiscountSubtotal),
-    totalSaved: round2(totalSaved),
+    shopVoucherDiscount: round2(shopVoucherDiscount),
+    discountSubtotal: round2(discountSubtotal),
   }
+}
+
+function isShopVoucherLabel(label: string): boolean {
+  if (!label.includes('voucher')) {
+    return false
+  }
+
+  return label.includes('shop') || label.includes('seller')
+}
+
+function resolveTotalSaved(
+  params: KnownOrderAmounts & {
+    explicitDiscountSubtotal?: number
+    fallback: number
+  },
+): number {
+  const baselineTotal = round2(params.merchandiseSubtotal + params.shippingFee)
+  const canInferFromTotal = baselineTotal > 0 && params.orderTotal > 0 && baselineTotal >= params.orderTotal
+  const inferredDiscountSubtotal = Math.max(
+    0,
+    canInferFromTotal ? round2(baselineTotal - params.orderTotal) : 0,
+  )
+  const knownDiscountSubtotal = round2(
+    Math.max(0, params.shippingDiscountSubtotal) + Math.max(0, params.shopVoucherDiscount),
+  )
+  const explicitDiscountSubtotal = round2(Math.max(0, params.explicitDiscountSubtotal ?? 0))
+  const structuredCheckoutSavings = Math.max(knownDiscountSubtotal, explicitDiscountSubtotal)
+
+  if (structuredCheckoutSavings > 0) {
+    const checkoutSavings = Math.max(structuredCheckoutSavings, inferredDiscountSubtotal)
+    return round2(checkoutSavings + Math.max(0, params.fallback))
+  }
+
+  return round2(Math.max(inferredDiscountSubtotal, Math.max(0, params.fallback)))
 }
 
 function extractItems(sourceObject: Record<string, unknown>): Record<string, unknown>[] {
