@@ -43,6 +43,17 @@ Run from the repository root:
 - Current provider logic uses placeholder data contracts.
 - Before implementing live Shopee extraction, verify legal and technical compliance for any data source (official APIs, exports, or allowed page parsing).
 
+## Load Extension In Edge
+
+1. Run `npm run build:extension` from repository root.
+2. Open `edge://extensions`.
+3. Enable Developer mode.
+4. Click Load unpacked.
+5. Select this exact folder: `apps/extension/dist`.
+
+If you see `Manifest file is missing or unreadable`, you likely selected the wrong folder (for example repository root or `apps/extension`).
+The manifest used by Edge is in `apps/extension/dist/manifest.json`.
+
 ## Immediate Next Build Targets
 
 1. Add waitlist capture backend for landing CTA.

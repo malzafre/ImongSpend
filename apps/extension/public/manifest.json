@@ -4,10 +4,17 @@
   "version": "0.1.0",
   "description": "Shopee-first spending estimator for Chrome.",
   "minimum_chrome_version": "120",
-  "permissions": ["storage"],
+  "permissions": ["storage", "activeTab", "tabs", "scripting"],
   "host_permissions": [
     "https://*.shopee.ph/*",
-    "https://*.shopee.com/*"
+    "https://*.shopee.com/*",
+    "https://*.shopee.com.my/*",
+    "https://*.shopee.sg/*",
+    "https://*.shopee.vn/*",
+    "https://*.shopee.co.id/*",
+    "https://*.shopee.tw/*",
+    "https://*.shopee.co.th/*",
+    "https://*.shopee.com.br/*"
   ],
   "action": {
     "default_title": "ImongSpend",
@@ -22,10 +29,33 @@
     {
       "matches": [
         "https://*.shopee.ph/*",
-        "https://*.shopee.com/*"
+        "https://*.shopee.com/*",
+        "https://*.shopee.com.my/*",
+        "https://*.shopee.sg/*",
+        "https://*.shopee.vn/*",
+        "https://*.shopee.co.id/*",
+        "https://*.shopee.tw/*",
+        "https://*.shopee.co.th/*",
+        "https://*.shopee.com.br/*"
       ],
       "js": ["assets/content.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page-bridge.js"],
+      "matches": [
+        "https://*.shopee.ph/*",
+        "https://*.shopee.com/*",
+        "https://*.shopee.com.my/*",
+        "https://*.shopee.sg/*",
+        "https://*.shopee.vn/*",
+        "https://*.shopee.co.id/*",
+        "https://*.shopee.tw/*",
+        "https://*.shopee.co.th/*",
+        "https://*.shopee.com.br/*"
+      ]
     }
   ]
 }
