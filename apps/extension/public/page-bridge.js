@@ -1,9 +1,14 @@
 (() => {
-  if (window.__IMONGSPEND_PAGE_BRIDGE__) {
+  const hasLegacyBridge =
+    window.__IMONGSPEND_PAGE_BRIDGE__ === true &&
+    window.__IMONGSPEND_PAGE_BRIDGE_DETAIL_FETCH__ !== true
+
+  if (window.__IMONGSPEND_PAGE_BRIDGE_DETAIL_FETCH__ === true) {
     return
   }
 
   window.__IMONGSPEND_PAGE_BRIDGE__ = true
+  window.__IMONGSPEND_PAGE_BRIDGE_DETAIL_FETCH__ = true
 
   const COMMAND_EVENT = '__IMONGSPEND_PAGE_COMMAND__'
   const RESULT_EVENT = '__IMONGSPEND_PAGE_FETCH_RESULT__'
@@ -376,6 +381,56 @@
 
   window.addEventListener(COMMAND_EVENT, async (event) => {
     const detail = event && event.detail ? event.detail : {}
+    if (detail.type === 'RUN_DETAIL_FETCH') {
+      const requestId = detail.requestId
+      const orderIds = Array.isArray(detail.orderIds)
+        ? detail.orderIds
+            .filter((orderId) => typeof orderId === 'string')
+            .map((orderId) => orderId.trim())
+            .filter((orderId) => orderId && orderId !== 'unknown')
+        : []
+
+      try {
+        const orders = orderIds.map((orderId) => ({
+          info_card: {
+            order_id: orderId,
+          },
+        }))
+
+        if (orders.length > 0) {
+          await enrichWithOrderDetails(orders, orders.length, DEFAULT_DETAIL_DELAY_MS, DEFAULT_DETAIL_CONCURRENCY)
+        }
+
+        window.dispatchEvent(
+          new CustomEvent(RESULT_EVENT, {
+            detail: {
+              requestId,
+              ok: true,
+              payload: JSON.stringify({
+                orders,
+              }),
+            },
+          }),
+        )
+      } catch (error) {
+        window.dispatchEvent(
+          new CustomEvent(RESULT_EVENT, {
+            detail: {
+              requestId,
+              ok: false,
+              error: error instanceof Error ? error.message : 'Order detail fetch failed',
+            },
+          }),
+        )
+      }
+
+      return
+    }
+
+    if (detail.type === 'RUN_FETCH' && hasLegacyBridge) {
+      return
+    }
+
     if (detail.type !== 'RUN_FETCH') {
       return
     }

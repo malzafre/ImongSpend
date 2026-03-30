@@ -1,7 +1,15 @@
 import { useMemo, useState } from 'react'
-import type { ResearchCalculationResult } from '@shared/index'
+import type { ResearchCalculationResult, ResearchOrderRow } from '@shared/index'
 
 type Stage = 'idle' | 'running' | 'done' | 'error'
+
+type CalculationResponse =
+  | { ok: true; result: ResearchCalculationResult }
+  | { ok: false; error: string }
+
+type DetailResponse =
+  | { ok: true; rows: ResearchOrderRow[] }
+  | { ok: false; error: string }
 
 const STEPS = [
   'Open Shopee My Purchase in this browser.',
@@ -32,9 +40,6 @@ export function PopupApp() {
       }),
     [],
   )
-
-  const startedAt = result ? formatDate(result.from) : '--'
-  const endedAt = result ? formatDate(result.to) : '--'
 
   async function handleCalculate(): Promise<void> {
     setError(null)
@@ -75,19 +80,56 @@ export function PopupApp() {
     }
   }
 
-  function handleDownloadCsv(): void {
-    if (!result) {
+  async function handleDownloadCsv(): Promise<void> {
+    if (!result || stage === 'running') {
       return
     }
 
-    const csv = resultToCsv(result)
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `imongspend-shopee-${Date.now()}.csv`
-    anchor.click()
-    URL.revokeObjectURL(url)
+    setError(null)
+    setStage('running')
+
+    try {
+      const orderIds = getUniqueKnownOrderIds(result.rows)
+
+      if (orderIds.length === 0) {
+        triggerCsvDownload(resultToCsv(result))
+        setStage('done')
+        return
+      }
+
+      const tabId = await getActiveTabId()
+      const detailFetchTimeoutMs = estimateDetailFetchTimeoutMs(orderIds.length)
+      const response = await withTimeout(
+        sendOrderDetailsFetch(tabId, orderIds),
+        detailFetchTimeoutMs,
+        'Fetching order details timed out. Keep Shopee My Purchase open and retry.',
+      )
+
+      if (!response.ok) {
+        throw new Error(response.error)
+      }
+
+      const mergedRows = mergeRowsWithDetails(result.rows, response.rows)
+      const mergedResult: ResearchCalculationResult = {
+        ...result,
+        rows: mergedRows,
+      }
+
+      triggerCsvDownload(resultToCsv(mergedResult))
+
+      setResult(mergedResult)
+      setStage('done')
+    } catch (unknownError) {
+      const raw = unknownError instanceof Error ? unknownError.message : 'Unable to fetch order details now.'
+      const normalized = /(403|forbidden|blocked|failed to fetch)/i.test(raw)
+        ? 'Shopee blocked detail fetch. Keep My Purchase open, scroll once, disable blockers for Shopee, then retry.'
+        : isConnectionError(raw)
+          ? 'ImongSpend cannot reach this Shopee tab. Refresh Shopee, then retry. If it persists, reload extension in edge://extensions.'
+          : raw
+
+      setStage('error')
+      setError(normalized)
+    }
   }
 
   function handleReset(): void {
@@ -148,39 +190,14 @@ export function PopupApp() {
 
           <div className="stats-grid">
             <article className="stat-chip">
-              <p>Total orders scanned</p>
-              <strong>{result.orderCount.toLocaleString()}</strong>
-            </article>
-            <article className="stat-chip">
               <p>Completed orders</p>
               <strong>{result.completedCount.toLocaleString()}</strong>
             </article>
-            <article className="stat-chip">
-              <p>Cancelled orders</p>
-              <strong>{result.cancelledCount.toLocaleString()}</strong>
-            </article>
-            <article className="stat-chip">
-              <p>Total saved</p>
-              <strong>{currency.format(result.totalSaved)}</strong>
-            </article>
-            <article className="stat-chip">
-              <p>Adjustments</p>
-              <strong>{currency.format(result.totalAdjustments)}</strong>
-            </article>
-            <article className="stat-chip">
-              <p>Merchandise subtotal</p>
-              <strong>{currency.format(sumRows(result.rows.map((row) => row.merchandiseSubtotal)))}</strong>
-            </article>
-          </div>
-
-          <div className="timeline">
-            <span>{startedAt}</span>
-            <span>{endedAt}</span>
           </div>
 
           <div className="button-row">
-            <button className="download-btn" onClick={handleDownloadCsv}>
-              Download CSV
+            <button className="download-btn" onClick={() => void handleDownloadCsv()} disabled={stage === 'running'}>
+              {stage === 'running' ? 'Fetching details...' : 'Download CSV'}
             </button>
             <button className="secondary-btn" onClick={handleReset}>
               Clear Result
@@ -207,8 +224,10 @@ type RuntimeWithLastError = {
     ) => void
     sendMessage: (
       tabId: number,
-      message: { type: 'IMONGSPEND_RESEARCH_CALCULATE'; payload: { maxPages: number } },
-      callback: (response?: ResponseMessage) => void,
+      message:
+        | { type: 'IMONGSPEND_RESEARCH_CALCULATE'; payload: { maxPages: number } }
+        | { type: 'IMONGSPEND_FETCH_ORDER_DETAILS'; payload: { orderIds: string[] } },
+      callback: (response?: unknown) => void,
     ) => void
   }
   scripting?: {
@@ -221,10 +240,6 @@ type RuntimeWithLastError = {
     ) => void
   }
 }
-
-type ResponseMessage =
-  | { ok: true; result: ResearchCalculationResult }
-  | { ok: false; error: string }
 
 async function getActiveTabId(): Promise<number> {
   const chromeRef = (globalThis as { chrome?: RuntimeWithLastError }).chrome
@@ -254,7 +269,7 @@ async function getActiveTabId(): Promise<number> {
   return activeTab.id
 }
 
-async function sendResearchCalculation(tabId: number): Promise<ResponseMessage> {
+async function sendResearchCalculation(tabId: number): Promise<CalculationResponse> {
   const chromeRef = (globalThis as { chrome?: RuntimeWithLastError }).chrome
   if (!chromeRef?.tabs?.sendMessage) {
     throw new Error('Unable to communicate with active tab.')
@@ -284,8 +299,8 @@ async function sendResearchCalculation(tabId: number): Promise<ResponseMessage> 
 async function sendCalculationMessageOnce(
   chromeRef: RuntimeWithLastError,
   tabId: number,
-): Promise<ResponseMessage> {
-  return new Promise<ResponseMessage>((resolve, reject) => {
+): Promise<CalculationResponse> {
+  return new Promise<CalculationResponse>((resolve, reject) => {
     chromeRef.tabs?.sendMessage(
       tabId,
       {
@@ -304,7 +319,74 @@ async function sendCalculationMessageOnce(
           return
         }
 
-        resolve(response)
+        if (typeof response !== 'object' || response === null || !('ok' in response)) {
+          reject(new Error('Malformed response from Shopee page.'))
+          return
+        }
+
+        resolve(response as CalculationResponse)
+      },
+    )
+  })
+}
+
+async function sendOrderDetailsFetch(tabId: number, orderIds: string[]): Promise<DetailResponse> {
+  const chromeRef = (globalThis as { chrome?: RuntimeWithLastError }).chrome
+  if (!chromeRef?.tabs?.sendMessage) {
+    throw new Error('Unable to communicate with active tab.')
+  }
+
+  const failures: string[] = []
+
+  try {
+    return await sendOrderDetailsMessageOnce(chromeRef, tabId, orderIds)
+  } catch (unknownError) {
+    const message = unknownError instanceof Error ? unknownError.message : 'Initial tab message failed.'
+    failures.push(message)
+  }
+
+  try {
+    await ensureContentScriptInjected(chromeRef, tabId)
+    await sleep(120)
+    return await sendOrderDetailsMessageOnce(chromeRef, tabId, orderIds)
+  } catch (unknownError) {
+    const message = unknownError instanceof Error ? unknownError.message : 'Script injection retry failed.'
+    failures.push(message)
+  }
+
+  throw new Error(formatTabConnectionError(failures))
+}
+
+async function sendOrderDetailsMessageOnce(
+  chromeRef: RuntimeWithLastError,
+  tabId: number,
+  orderIds: string[],
+): Promise<DetailResponse> {
+  return new Promise<DetailResponse>((resolve, reject) => {
+    chromeRef.tabs?.sendMessage(
+      tabId,
+      {
+        type: 'IMONGSPEND_FETCH_ORDER_DETAILS',
+        payload: { orderIds },
+      },
+      (response) => {
+        const runtimeError = chromeRef.runtime?.lastError?.message
+        if (runtimeError) {
+          reject(new Error(runtimeError))
+          return
+        }
+
+        if (!response) {
+          reject(new Error('No detail response from Shopee page. Refresh and retry.'))
+          return
+        }
+
+        if (typeof response !== 'object' || response === null || !('ok' in response)) {
+          reject(new Error('Malformed detail response from Shopee page.'))
+          return
+        }
+
+        resolve(response as DetailResponse)
       },
     )
   })
@@ -378,6 +460,61 @@ function escapeCsv(value: string): string {
   return `"${value.replaceAll('"', '""')}"`
 }
 
+function triggerCsvDownload(csv: string): void {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `imongspend-shopee-${Date.now()}.csv`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function getUniqueKnownOrderIds(rows: ResearchOrderRow[]): string[] {
+  return Array.from(
+    new Set(
+      rows
+        .map((row) => row.orderId.trim())
+        .filter((orderId) => orderId.length > 0 && orderId !== 'unknown'),
+    ),
+  )
+}
+
+function estimateDetailFetchTimeoutMs(orderCount: number): number {
+  const perOrderBudgetMs = 1_100
+  const fixedOverheadMs = 60_000
+  const estimatedMs = Math.ceil((orderCount / 3) * perOrderBudgetMs) + fixedOverheadMs
+  return Math.max(90_000, Math.min(20 * 60_000, estimatedMs))
+}
+
+function mergeRowsWithDetails(rows: ResearchOrderRow[], enrichedRows: ResearchOrderRow[]): ResearchOrderRow[] {
+  const detailByOrderId = new Map<string, ResearchOrderRow>()
+
+  for (const row of enrichedRows) {
+    if (row.orderId && row.orderId !== 'unknown') {
+      detailByOrderId.set(row.orderId, row)
+    }
+  }
+
+  return rows.map((row) => {
+    const enriched = detailByOrderId.get(row.orderId)
+    if (!enriched) {
+      return row
+    }
+
+    return {
+      ...row,
+      orderedAt: enriched.orderedAt,
+      merchandiseSubtotal: enriched.merchandiseSubtotal,
+      shippingFee: enriched.shippingFee,
+      shippingDiscountSubtotal: enriched.shippingDiscountSubtotal,
+      paymentMethod: enriched.paymentMethod,
+      totalSaved: enriched.totalSaved,
+      itemSummary: enriched.itemSummary,
+    }
+  })
+}
+
 function isConnectionError(message: string): boolean {
   return /(receiving end does not exist|could not establish connection|no tab with id|message port closed|extension context invalidated)/i.test(
     message,
@@ -422,26 +559,4 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMes
       window.clearTimeout(timer)
     }
   }
-}
-
-function formatDate(iso: string): string {
-  if (iso === 'unknown') {
-    return 'Date unknown'
-  }
-
-  const parsed = new Date(iso)
-  if (Number.isNaN(parsed.getTime())) {
-    return 'Date unknown'
-  }
-
-  return parsed.toLocaleDateString('en-PH', {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-  })
-}
-
-function sumRows(values: number[]): number {
-  const total = values.reduce((acc, value) => acc + value, 0)
-  return Math.round(total * 100) / 100
 }

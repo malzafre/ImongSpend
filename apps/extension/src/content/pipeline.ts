@@ -131,6 +131,73 @@ export async function collectRowsViaPageBridge(maxPages: number): Promise<Collec
   }
 }
 
+export async function collectOrderDetailsViaPageBridge(orderIds: string[]): Promise<ResearchOrderRow[]> {
+  await ensurePageBridge()
+
+  const normalizedIds = Array.from(
+    new Set(
+      orderIds
+        .map((orderId) => orderId.trim())
+        .filter((orderId) => orderId.length > 0 && orderId !== 'unknown'),
+    ),
+  )
+
+  if (normalizedIds.length === 0) {
+    return []
+  }
+
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const payload = await new Promise<BridgeResult>((resolve) => {
+    const onResult = (event: Event): void => {
+      const customEvent = event as CustomEvent<{
+        requestId?: string
+        ok?: boolean
+        payload?: string
+        error?: string
+      }>
+
+      if (customEvent.detail?.requestId !== requestId) {
+        return
+      }
+
+      window.removeEventListener(PAGE_FETCH_RESULT_EVENT, onResult as EventListener)
+      resolve({
+        ok: customEvent.detail?.ok === true,
+        payload: customEvent.detail?.payload,
+        error: customEvent.detail?.error,
+      })
+    }
+
+    window.addEventListener(PAGE_FETCH_RESULT_EVENT, onResult as EventListener)
+    window.dispatchEvent(
+      new CustomEvent(PAGE_COMMAND_EVENT, {
+        detail: {
+          type: 'RUN_DETAIL_FETCH',
+          requestId,
+          orderIds: normalizedIds,
+        },
+      }),
+    )
+  })
+
+  if (!payload.ok) {
+    throw new Error(payload.error ?? 'Page bridge detail fetch failed.')
+  }
+
+  if (!payload.payload) {
+    throw new Error('Page bridge returned empty detail payload.')
+  }
+
+  const parsed = JSON.parse(payload.payload) as {
+    orders?: unknown[]
+  }
+  const orders = Array.isArray(parsed.orders) ? parsed.orders : []
+
+  return orders
+    .map((order) => mapOrderToRow(order as Record<string, unknown>, 'unknown'))
+    .filter((row) => row.orderId !== 'unknown')
+}
+
 export async function collectRowsViaContentApi(maxPages: number): Promise<CollectionResult> {
   const endpoints: EndpointConfig[] = [
     {

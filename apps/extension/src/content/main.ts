@@ -1,16 +1,29 @@
-import type { ResearchCalculationResult } from '@shared/index'
+import type { ResearchCalculationResult, ResearchOrderRow } from '@shared/index'
 import { buildResearchResult } from './calculate'
-import { collectRowsViaContentApi, collectRowsViaPageBridge, withStageTimeout } from './pipeline'
+import {
+  collectOrderDetailsViaPageBridge,
+  collectRowsViaContentApi,
+  collectRowsViaPageBridge,
+  withStageTimeout,
+} from './pipeline'
 
-type RequestMessage = {
-  type: 'IMONGSPEND_RESEARCH_CALCULATE'
-  payload?: {
-    maxPages?: number
-  }
-}
+type RequestMessage =
+  | {
+      type: 'IMONGSPEND_RESEARCH_CALCULATE'
+      payload?: {
+        maxPages?: number
+      }
+    }
+  | {
+      type: 'IMONGSPEND_FETCH_ORDER_DETAILS'
+      payload?: {
+        orderIds?: string[]
+      }
+    }
 
 type ResponseMessage =
   | { ok: true; result: ResearchCalculationResult }
+  | { ok: true; rows: ResearchOrderRow[] }
   | { ok: false; error: string }
 
 type RuntimeLike = {
@@ -31,7 +44,24 @@ const runtime = (globalThis as { chrome?: RuntimeLike }).chrome?.runtime
 
 runtime?.onMessage?.addListener((message, _sender, sendResponse) => {
   const typed = message as RequestMessage
-  if (typed?.type !== 'IMONGSPEND_RESEARCH_CALCULATE') {
+  if (!typed?.type) {
+    return
+  }
+
+  if (typed.type === 'IMONGSPEND_FETCH_ORDER_DETAILS') {
+    const orderIds = Array.isArray(typed.payload?.orderIds) ? typed.payload.orderIds : []
+
+    void collectOrderDetailsViaPageBridge(orderIds)
+      .then((rows) => sendResponse({ ok: true, rows }))
+      .catch((error: unknown) => {
+        const messageText = error instanceof Error ? error.message : 'Unexpected error'
+        sendResponse({ ok: false, error: messageText })
+      })
+
+    return true
+  }
+
+  if (typed.type !== 'IMONGSPEND_RESEARCH_CALCULATE') {
     return
   }
 
