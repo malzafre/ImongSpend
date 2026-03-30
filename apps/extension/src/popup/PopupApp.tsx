@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ResearchCalculationResult, ResearchOrderRow } from '@shared/index'
 
 type Stage = 'idle' | 'running' | 'done' | 'error'
@@ -13,10 +13,16 @@ type DetailResponse =
 
 const STEPS = [
   'Open Shopee My Purchase in this browser.',
-  'Confirm consent below.',
-  'Run calculator to fetch and compute totals locally.',
+  'Click Calculate My Spending to fetch and compute totals locally.',
   'Review totals and export CSV if needed.',
 ]
+
+const POLICY_DECISION_KEY = 'imongspend.popup.policy.decision.v1'
+const POLICY_ACKNOWLEDGED_KEY = 'imongspend.popup.policy.acknowledged.v1'
+const LEGACY_ONBOARDING_KEY = 'imongspend.popup.onboarding.accepted.v1'
+const FAQ_URL = 'https://imongspend.com/faq'
+
+type PolicyDecision = 'pending' | 'accepted'
 
 const statusLabel: Record<Stage, string> = {
   idle: 'Ready',
@@ -26,10 +32,39 @@ const statusLabel: Record<Stage, string> = {
 }
 
 export function PopupApp() {
-  const [consent, setConsent] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [policyReady, setPolicyReady] = useState(false)
+  const [policyDecision, setPolicyDecision] = useState<PolicyDecision>('pending')
   const [stage, setStage] = useState<Stage>('idle')
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<ResearchCalculationResult | null>(null)
+
+  useEffect(() => {
+    const storedDecision = window.localStorage.getItem(POLICY_DECISION_KEY)
+    const hasAcknowledgedPolicy =
+      window.localStorage.getItem(POLICY_ACKNOWLEDGED_KEY) === 'true' ||
+      window.localStorage.getItem(LEGACY_ONBOARDING_KEY) === 'true'
+
+    if (storedDecision === 'accepted') {
+      setPolicyDecision(storedDecision)
+      setPolicyReady(true)
+      return
+    }
+
+    if (storedDecision === 'declined') {
+      window.localStorage.setItem(POLICY_DECISION_KEY, 'pending')
+    }
+
+    if (hasAcknowledgedPolicy) {
+      window.localStorage.setItem(POLICY_DECISION_KEY, 'accepted')
+      setPolicyDecision('accepted')
+      setPolicyReady(true)
+      return
+    }
+
+    setPolicyDecision('pending')
+    setPolicyReady(true)
+  }, [])
 
   const currency = useMemo(
     () =>
@@ -44,9 +79,9 @@ export function PopupApp() {
   async function handleCalculate(): Promise<void> {
     setError(null)
 
-    if (!consent) {
+    if (policyDecision !== 'accepted') {
       setStage('error')
-      setError('Please confirm consent before calculation.')
+      setError('You must accept the Privacy Policy before calculating.')
       return
     }
 
@@ -138,60 +173,182 @@ export function PopupApp() {
     setStage('idle')
   }
 
+  function handleAcceptPolicy(): void {
+    window.localStorage.setItem(POLICY_DECISION_KEY, 'accepted')
+    window.localStorage.setItem(POLICY_ACKNOWLEDGED_KEY, 'true')
+    window.localStorage.setItem(LEGACY_ONBOARDING_KEY, 'true')
+    setPolicyDecision('accepted')
+    setError(null)
+    setStage('idle')
+  }
+
+  function handleDeclinePolicy(): void {
+    window.localStorage.setItem(POLICY_DECISION_KEY, 'pending')
+    window.localStorage.removeItem(POLICY_ACKNOWLEDGED_KEY)
+    window.localStorage.removeItem(LEGACY_ONBOARDING_KEY)
+    setPolicyDecision('pending')
+    setError(null)
+    setStage('idle')
+    window.close()
+  }
+
+  function handleToggleSettings(): void {
+    setSettingsOpen((current) => !current)
+  }
+
+  function handleShowPolicyAgain(): void {
+    setSettingsOpen(false)
+    window.localStorage.setItem(POLICY_DECISION_KEY, 'pending')
+    window.localStorage.removeItem(POLICY_ACKNOWLEDGED_KEY)
+    window.localStorage.removeItem(LEGACY_ONBOARDING_KEY)
+    setPolicyDecision('pending')
+    setError(null)
+    setStage('idle')
+  }
+
+  function handleClearLocalStorage(): void {
+    window.localStorage.clear()
+    setSettingsOpen(false)
+    setResult(null)
+    setError(null)
+    setStage('idle')
+    setPolicyDecision('pending')
+  }
+
+  function handleOpenFaq(): void {
+    window.open(FAQ_URL, '_blank', 'noopener,noreferrer')
+  }
+
   const stageClass = `status-pill status-${stage}`
+  const totalSpent = result?.positiveSpend ?? 0
+  const totalOrders = result?.orderCount ?? 0
+
+  if (!policyReady) {
+    return <main className="panel panel-popup" aria-busy="true" />
+  }
+
+  if (policyDecision !== 'accepted') {
+    return (
+      <main className="panel panel-popup popup-shell">
+        <div className="aurora" aria-hidden="true" />
+
+        <section className="glass-card policy-card" aria-label="Onboarding privacy policy">
+          <header className="popup-topbar onboarding-brand">
+            <div className="brand-cluster">
+              <img className="brand-logo" src="/imongspend-logo.png" alt="ImongSpend logo" />
+              <div>
+                <p className="kicker">Onboarding Policy</p>
+                <h1>Privacy and Data Use</h1>
+              </div>
+            </div>
+          </header>
+
+          <p className="hero-copy policy-copy">
+            ImongSpend reads your Shopee purchase history from the active browser tab to calculate spending insights for you.
+          </p>
+
+          <ul className="policy-list">
+            <li>All calculations run locally in your browser session.</li>
+            <li>We do not store or upload your purchase or order data.</li>
+            <li>We never ask for passwords, OTP codes, bank cards, or payment credentials.</li>
+            <li>You can clear local extension data any time from Settings.</li>
+          </ul>
+
+          <div className="policy-actions">
+            <button className="action-btn policy-btn" onClick={handleAcceptPolicy}>
+              Accept and Continue
+            </button>
+            <button className="secondary-btn decline-btn" onClick={handleDeclinePolicy}>
+              Decline and Close
+            </button>
+          </div>
+        </section>
+      </main>
+    )
+  }
 
   return (
-    <main className="panel panel-popup">
+    <main className="panel panel-popup popup-shell">
       <div className="aurora" aria-hidden="true" />
 
-      <header className="hero">
-        <p className="kicker">Shopee Research Calculator</p>
-        <h1>ImongSpend</h1>
-        <p className="hero-copy">
-          Lean mode: fast total estimate with local-only processing in your current session.
-        </p>
-        <div className={stageClass}>{statusLabel[stage]}</div>
+      <header className="popup-topbar">
+        <div className="brand-cluster">
+          <img className="brand-logo" src="/imongspend-logo.png" alt="ImongSpend logo" />
+          <div>
+            <p className="kicker">Shopee Order Calculator</p>
+            <h1>ImongSpend</h1>
+          </div>
+        </div>
+        <button
+          className="icon-btn"
+          aria-label={settingsOpen ? 'Close settings' : 'Open settings'}
+          aria-expanded={settingsOpen}
+          onClick={handleToggleSettings}
+        >
+          {settingsOpen ? 'Close' : 'Settings'}
+        </button>
       </header>
 
-      <section className="glass-card" aria-label="Steps">
-        <p className="subhead">How It Works</p>
-        <ol className="step-list">
-          {STEPS.map((step) => (
-            <li key={step}>{step}</li>
-          ))}
-        </ol>
+      {settingsOpen ? (
+        <section className="glass-card settings-card" aria-label="In-popup settings">
+          <p className="subhead">Settings</p>
+
+          <div className="settings-row">
+            <span>Provider</span>
+            <strong>Shopee (active)</strong>
+          </div>
+
+          <div className="settings-row">
+            <span>Mode</span>
+            <strong>Research</strong>
+          </div>
+
+          <div className="settings-row">
+            <span>Policy Notice</span>
+            <button className="settings-link-btn" onClick={handleShowPolicyAgain}>
+              Show Again
+            </button>
+          </div>
+
+          <div className="settings-row">
+            <span>Storage</span>
+            <button className="settings-link-btn danger-btn" onClick={handleClearLocalStorage}>
+              Clear Local Storage
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="metric-split" aria-label="Spending summary">
+        <article className="metric-card metric-primary">
+          <p className="subhead">Total Spent</p>
+          <p className="amount">{currency.format(totalSpent)}</p>
+        </article>
+
+        <article className="metric-card metric-secondary">
+          <p className="subhead">Total Orders</p>
+          <p className="metric-number">{totalOrders.toLocaleString()}</p>
+        </article>
       </section>
 
-      <label className="consent-toggle">
-        <input
-          type="checkbox"
-          checked={consent}
-          onChange={(event) => setConsent(event.currentTarget.checked)}
-        />
-        <span>I understand this is research mode and totals may be incomplete.</span>
-      </label>
+      <div className={stageClass}>{statusLabel[stage]}</div>
 
-      <button
-        className="action-btn"
-        onClick={() => void handleCalculate()}
-        disabled={stage === 'running'}
-      >
-        {stage === 'running' ? 'Calculating Spend...' : 'Calculate My Shopee Spend'}
+      <button className="action-btn" onClick={() => void handleCalculate()} disabled={stage === 'running'}>
+        {stage === 'running' ? 'Calculating Spend...' : 'Calculate My Spending'}
       </button>
 
       {error ? <p className="error-text">{error}</p> : null}
 
       {result ? (
-        <section className="result-shell" aria-label="Results">
-          <div className="result-top">
-            <p className="subhead">Total Spent (Final Total)</p>
-            <p className="amount">{currency.format(result.positiveSpend)}</p>
-          </div>
-
+        <section className="result-shell" aria-label="Calculation details">
           <div className="stats-grid">
             <article className="stat-chip">
               <p>Completed orders</p>
               <strong>{result.completedCount.toLocaleString()}</strong>
+            </article>
+            <article className="stat-chip">
+              <p>Estimated grand total</p>
+              <strong>{currency.format(result.estimatedGrandTotal)}</strong>
             </article>
           </div>
 
@@ -207,6 +364,25 @@ export function PopupApp() {
           <p className="fineprint">{result.notes.join(' ')}</p>
         </section>
       ) : null}
+
+      <section className="glass-card" aria-label="Steps">
+        <p className="subhead">Steps</p>
+        <ol className="step-list">
+          {STEPS.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="glass-card faq-card" aria-label="FAQ">
+        <h2>FAQ</h2>
+        <p className="hero-copy faq-copy">
+          Answers about data scope, privacy, and result accuracy will live on the ImongSpend website.
+        </p>
+        <button className="secondary-btn" onClick={handleOpenFaq}>
+          Open FAQ Website
+        </button>
+      </section>
     </main>
   )
 }
