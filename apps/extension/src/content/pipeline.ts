@@ -84,23 +84,9 @@ export async function collectRowsViaPageBridge(maxPages: number): Promise<Collec
   const parsed = JSON.parse(payload.payload) as {
     orders?: unknown[]
     endpoint?: string
-    detailAttempted?: number
-    detailEnriched?: number
-    detailCached?: number
-    detailFailed?: number
-    detailRateLimited?: boolean
-    detailSkippedAfterRateLimit?: number
   }
   const orders = Array.isArray(parsed.orders) ? parsed.orders : []
   const endpointLabel = parsed.endpoint ?? ENDPOINT_GET_ALL_ORDER_AND_CHECKOUT_LIST
-  const detailAttempted = Number.isFinite(parsed.detailAttempted) ? Number(parsed.detailAttempted) : 0
-  const detailEnriched = Number.isFinite(parsed.detailEnriched) ? Number(parsed.detailEnriched) : 0
-  const detailCached = Number.isFinite(parsed.detailCached) ? Number(parsed.detailCached) : 0
-  const detailFailed = Number.isFinite(parsed.detailFailed) ? Number(parsed.detailFailed) : 0
-  const detailRateLimited = parsed.detailRateLimited === true
-  const detailSkippedAfterRateLimit = Number.isFinite(parsed.detailSkippedAfterRateLimit)
-    ? Number(parsed.detailSkippedAfterRateLimit)
-    : 0
 
   const source: OrderSource = endpointLabel.includes('get_order_list')
     ? 'order_list'
@@ -118,16 +104,7 @@ export async function collectRowsViaPageBridge(maxPages: number): Promise<Collec
 
   return {
     rows,
-    notes: [
-      `Data source: page-context authenticated fetch (${endpointLabel}).`,
-      detailAttempted > 0
-        ? `Order detail fetch: enriched ${detailEnriched}/${detailAttempted} orders via get_order_detail (cache hits: ${detailCached}, failures: ${detailFailed}).`
-        : 'Order detail fetch is disabled by default to avoid N+1 throttling on large histories.',
-      detailRateLimited
-        ? `Shopee rate limit detected while fetching order detail. Remaining detail requests skipped: ${detailSkippedAfterRateLimit}.`
-        : 'No order-detail throttling event observed in this run.',
-      'Total saved includes voucher/discount rows from order detail when available, plus item-level savings fallback.',
-    ],
+    notes: [],
   }
 }
 
@@ -246,9 +223,10 @@ export async function collectRowsViaContentApi(maxPages: number): Promise<Collec
 
       if (rows.length > 0) {
         const firstUrl = endpoint.build(0).split('?')[0]
+        void firstUrl
         return {
           rows,
-          notes: [`Data source: content-script API fallback (${firstUrl}).`],
+          notes: [],
         }
       }
     } catch (error) {

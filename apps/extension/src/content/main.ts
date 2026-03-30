@@ -77,11 +77,7 @@ runtime?.onMessage?.addListener((message, _sender, sendResponse) => {
 
 async function runResearchCalculation(maxPagesInput?: number): Promise<ResearchCalculationResult> {
   const maxPages = clampMaxPages(maxPagesInput)
-  const notes: string[] = [
-    'Research mode only. Results are experimental and may be incomplete.',
-    'Formula includes Completed orders as positive spend.',
-    'Adjustments combine refunds and cancelled-order offsets.',
-  ]
+  const notes: string[] = []
 
   try {
     const bridgeResult = await withStageTimeout(
@@ -90,11 +86,12 @@ async function runResearchCalculation(maxPagesInput?: number): Promise<ResearchC
       'Page-context collection timed out.',
     )
 
-    notes.push(...bridgeResult.notes)
+    if (bridgeResult.notes.length > 0) {
+      notes.push(...bridgeResult.notes)
+    }
     return buildResearchResult(bridgeResult.rows, notes)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Page bridge failed'
-    notes.push(`Page bridge fallback note: ${message}`)
+    void error
   }
 
   const apiResult = await withStageTimeout(
@@ -103,8 +100,9 @@ async function runResearchCalculation(maxPagesInput?: number): Promise<ResearchC
     'Content API collection timed out.',
   )
 
-  notes.push(...apiResult.notes)
-  notes.push('Fallback used: content-script API mode.')
+  if (apiResult.notes.length > 0) {
+    notes.push(...apiResult.notes)
+  }
 
   return buildResearchResult(apiResult.rows, notes)
 }

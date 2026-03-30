@@ -100,6 +100,11 @@ body {
   gap: 0.72rem;
 }
 
+.popup-gate {
+  min-height: 560px;
+  align-content: center;
+}
+
 .aurora {
   position: absolute;
   inset: -90px -80px auto auto;

@@ -229,7 +229,7 @@ export function PopupApp() {
 
   if (policyDecision !== 'accepted') {
     return (
-      <main className="panel panel-popup popup-shell">
+      <main className="panel panel-popup popup-shell popup-gate">
         <div className="aurora" aria-hidden="true" />
 
         <section className="glass-card policy-card" aria-label="Onboarding privacy policy">
@@ -294,16 +294,6 @@ export function PopupApp() {
           <p className="subhead">Settings</p>
 
           <div className="settings-row">
-            <span>Provider</span>
-            <strong>Shopee (active)</strong>
-          </div>
-
-          <div className="settings-row">
-            <span>Mode</span>
-            <strong>Research</strong>
-          </div>
-
-          <div className="settings-row">
             <span>Policy Notice</span>
             <button className="settings-link-btn" onClick={handleShowPolicyAgain}>
               Show Again
@@ -360,8 +350,6 @@ export function PopupApp() {
               Clear Result
             </button>
           </div>
-
-          <p className="fineprint">{result.notes.join(' ')}</p>
         </section>
       ) : null}
 

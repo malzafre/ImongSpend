@@ -4,6 +4,12 @@
   "version": "0.1.0",
   "description": "Shopee-first spending estimator for Chrome.",
   "minimum_chrome_version": "120",
+  "icons": {
+    "16": "extension-logo.png",
+    "32": "extension-logo.png",
+    "48": "extension-logo.png",
+    "128": "extension-logo.png"
+  },
   "permissions": ["storage", "activeTab", "tabs", "scripting"],
   "host_permissions": [
     "https://*.shopee.ph/*",
@@ -18,7 +24,11 @@
   ],
   "action": {
     "default_title": "ImongSpend",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "extension-logo.png",
+      "32": "extension-logo.png"
+    }
   },
   "options_page": "options.html",
   "background": {
