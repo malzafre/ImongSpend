@@ -37,6 +37,20 @@ Run from the repository root:
 - `npm run lint` lints landing and extension.
 - `npm run typecheck` checks landing, extension, and shared package.
 
+## Extension CI/CD
+
+- Pull requests and pushes to `main` run extension-only checks (lint, typecheck, build).
+- Pushing a tag matching `v*` builds and publishes an extension-only zip asset to GitHub Releases.
+
+Create a release tag from your local repository:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The generated release asset is named like `imongspend-extension-v0.1.0.zip` and contains only `apps/extension/dist` output.
+
 ## Chrome Extension Notes
 
 - The extension is scaffolded for Manifest V3.

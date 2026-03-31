@@ -1,0 +1,83 @@
+name: Extension CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extension-checks:
+    name: Extension Checks
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint extension
+        run: npm run lint:extension
+
+      - name: Typecheck shared package
+        run: npm run typecheck --workspace @imongspend/shared
+
+      - name: Typecheck extension
+        run: npm run typecheck --workspace @imongspend/extension
+
+      - name: Build extension
+        run: npm run build:extension
+
+  extension-release:
+    name: Extension Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify extension build
+        run: |
+          npm run lint:extension
+          npm run typecheck --workspace @imongspend/shared
+          npm run typecheck --workspace @imongspend/extension
+          npm run build:extension
+
+      - name: Package extension zip
+        run: |
+          mkdir -p artifacts
+          cd apps/extension/dist
+          zip -r "../../../artifacts/imongspend-extension-${{ github.ref_name }}.zip" .
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/imongspend-extension-${{ github.ref_name }}.zip
