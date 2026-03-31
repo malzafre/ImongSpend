@@ -11,6 +11,14 @@ type DetailResponse =
   | { ok: true; rows: ResearchOrderRow[] }
   | { ok: false; error: string }
 
+type SavedSummary = {
+  positiveSpend: number
+  orderCount: number
+  completedCount: number
+  estimatedGrandTotal: number
+  updatedAt: string
+}
+
 const STEPS = [
   'Open Shopee My Purchase in this browser.',
   'Click Calculate My Spending to fetch and compute totals locally.',
@@ -20,6 +28,7 @@ const STEPS = [
 const POLICY_DECISION_KEY = 'imongspend.popup.policy.decision.v1'
 const POLICY_ACKNOWLEDGED_KEY = 'imongspend.popup.policy.acknowledged.v1'
 const LEGACY_ONBOARDING_KEY = 'imongspend.popup.onboarding.accepted.v1'
+const SAVED_SUMMARY_KEY = 'imongspend.popup.saved-summary.v1'
 const FAQ_URL = 'https://imongspend.com/faq'
 
 type PolicyDecision = 'pending' | 'accepted'
@@ -35,11 +44,15 @@ export function PopupApp() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [policyReady, setPolicyReady] = useState(false)
   const [policyDecision, setPolicyDecision] = useState<PolicyDecision>('pending')
+  const [savedSummary, setSavedSummary] = useState<SavedSummary | null>(null)
   const [stage, setStage] = useState<Stage>('idle')
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<ResearchCalculationResult | null>(null)
 
   useEffect(() => {
+    const initialSummary = readSavedSummaryFromStorage()
+    setSavedSummary(initialSummary)
+
     const storedDecision = window.localStorage.getItem(POLICY_DECISION_KEY)
     const hasAcknowledgedPolicy =
       window.localStorage.getItem(POLICY_ACKNOWLEDGED_KEY) === 'true' ||
@@ -76,6 +89,15 @@ export function PopupApp() {
     [],
   )
 
+  const dateTimeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat('en-PH', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }),
+    [],
+  )
+
   async function handleCalculate(): Promise<void> {
     setError(null)
 
@@ -99,6 +121,9 @@ export function PopupApp() {
         throw new Error(response.error)
       }
 
+      const summary = resultToSavedSummary(response.result)
+      persistSavedSummary(summary)
+      setSavedSummary(summary)
       setResult(response.result)
       setStage('done')
     } catch (unknownError) {
@@ -152,6 +177,9 @@ export function PopupApp() {
 
       triggerCsvDownload(resultToCsv(mergedResult))
 
+      const summary = resultToSavedSummary(mergedResult)
+      persistSavedSummary(summary)
+      setSavedSummary(summary)
       setResult(mergedResult)
       setStage('done')
     } catch (unknownError) {
@@ -209,10 +237,19 @@ export function PopupApp() {
   function handleClearLocalStorage(): void {
     window.localStorage.clear()
     setSettingsOpen(false)
+    setSavedSummary(null)
     setResult(null)
     setError(null)
     setStage('idle')
     setPolicyDecision('pending')
+  }
+
+  function handleClearSavedResults(): void {
+    window.localStorage.removeItem(SAVED_SUMMARY_KEY)
+    setSavedSummary(null)
+    setResult(null)
+    setError(null)
+    setStage('idle')
   }
 
   function handleOpenFaq(): void {
@@ -220,8 +257,10 @@ export function PopupApp() {
   }
 
   const stageClass = `status-pill status-${stage}`
-  const totalSpent = result?.positiveSpend ?? 0
-  const totalOrders = result?.orderCount ?? 0
+  const hasSavedSummary = savedSummary !== null
+  const totalSpent = savedSummary?.positiveSpend ?? 0
+  const totalOrders = savedSummary?.orderCount ?? 0
+  const lastUpdatedLabel = savedSummary ? formatLastUpdatedLabel(savedSummary.updatedAt, dateTimeFormatter) : null
 
   if (!policyReady) {
     return <main className="panel panel-popup" aria-busy="true" />
@@ -306,6 +345,13 @@ export function PopupApp() {
               Clear Local Storage
             </button>
           </div>
+
+          <div className="settings-row">
+            <span>Saved Results</span>
+            <button className="settings-link-btn" onClick={handleClearSavedResults}>
+              Clear Saved Results
+            </button>
+          </div>
         </section>
       ) : null}
 
@@ -323,8 +369,10 @@ export function PopupApp() {
 
       <div className={stageClass}>{statusLabel[stage]}</div>
 
+      {lastUpdatedLabel ? <p className="status-meta">{lastUpdatedLabel}</p> : null}
+
       <button className="action-btn" onClick={() => void handleCalculate()} disabled={stage === 'running'}>
-        {stage === 'running' ? 'Calculating Spend...' : 'Calculate My Spending'}
+        {stage === 'running' ? 'Calculating Spend...' : hasSavedSummary ? 'Recalculate My Spending' : 'Calculate My Spending'}
       </button>
 
       {error ? <p className="error-text">{error}</p> : null}
@@ -678,6 +726,67 @@ function mergeRowsWithDetails(rows: ResearchOrderRow[], enrichedRows: ResearchOr
       itemSummary: enriched.itemSummary,
     }
   })
+}
+
+function resultToSavedSummary(result: ResearchCalculationResult): SavedSummary {
+  return {
+    positiveSpend: result.positiveSpend,
+    orderCount: result.orderCount,
+    completedCount: result.completedCount,
+    estimatedGrandTotal: result.estimatedGrandTotal,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function persistSavedSummary(summary: SavedSummary): void {
+  window.localStorage.setItem(SAVED_SUMMARY_KEY, JSON.stringify(summary))
+}
+
+function readSavedSummaryFromStorage(): SavedSummary | null {
+  const raw = window.localStorage.getItem(SAVED_SUMMARY_KEY)
+  if (!raw) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<SavedSummary>
+    const positiveSpend = Number(parsed.positiveSpend)
+    const orderCount = Number(parsed.orderCount)
+    const completedCount = Number(parsed.completedCount)
+    const estimatedGrandTotal = Number(parsed.estimatedGrandTotal)
+    const updatedAt = typeof parsed.updatedAt === 'string' ? parsed.updatedAt : ''
+
+    if (
+      !Number.isFinite(positiveSpend) ||
+      !Number.isFinite(orderCount) ||
+      !Number.isFinite(completedCount) ||
+      !Number.isFinite(estimatedGrandTotal) ||
+      updatedAt.length === 0
+    ) {
+      window.localStorage.removeItem(SAVED_SUMMARY_KEY)
+      return null
+    }
+
+    return {
+      positiveSpend,
+      orderCount,
+      completedCount,
+      estimatedGrandTotal,
+      updatedAt,
+    }
+  } catch {
+    window.localStorage.removeItem(SAVED_SUMMARY_KEY)
+    return null
+  }
+}
+
+function formatLastUpdatedLabel(updatedAt: string, formatter: Intl.DateTimeFormat): string {
+  const date = new Date(updatedAt)
+  if (Number.isNaN(date.getTime())) {
+    return 'Last updated: recently'
+  }
+
+  return `Last updated: ${formatter.format(date)}`
 }
 
 function isConnectionError(message: string): boolean {

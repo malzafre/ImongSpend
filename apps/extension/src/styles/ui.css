@@ -269,6 +269,12 @@ h2 {
   color: #8a2d26;
 }
 
+.status-meta {
+  margin: -0.16rem 0 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
 .glass-card {
   position: relative;
   z-index: 1;
