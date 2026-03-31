@@ -705,43 +705,71 @@ function resultToCsv(result: ResearchCalculationResult): string {
   const downloadedAt = new Date()
   const downloadedAtLabel = formatUserFriendlyDateTime(downloadedAt)
   const lines: string[] = []
-  lines.push(
-    'order_id,ordered_at,status,shop_name,merchandise_subtotal,shipping_fee,shipping_discount_subtotal,shop_voucher_discount,order_total,payment_method,total_saved,amount,item_summary,positive_spend,order_count,completed_count,cancelled_count,total_saved_metric,downloaded_at',
-  )
+  const orderHeaders = [
+    'order_id',
+    'ordered_at',
+    'status',
+    'shop_name',
+    'merchandise_subtotal',
+    'shipping_fee',
+    'shipping_discount_subtotal',
+    'shop_voucher_discount',
+    'order_total',
+    'payment_method',
+    'total_saved',
+    'amount',
+    'item_summary',
+  ]
+  const separatorHeader = ['']
+  const metricHeaders = ['core_metric', 'core_value']
+  lines.push([...orderHeaders, ...separatorHeader, ...metricHeaders].map(escapeCsv).join(','))
 
-  const coreMetrics = {
-    positiveSpend: result.positiveSpend.toFixed(2),
-    orderCount: String(result.orderCount),
-    completedCount: String(result.completedCount),
-    cancelledCount: String(result.cancelledCount),
-    totalSavedMetric: result.totalSaved.toFixed(2),
-    downloadedAt: downloadedAtLabel,
-  }
+  const orderRows = result.rows.map((row) => [
+    row.orderId,
+    formatUserFriendlyOrderedAt(row.orderedAt),
+    row.status,
+    row.shopName,
+    row.merchandiseSubtotal.toFixed(2),
+    row.shippingFee.toFixed(2),
+    row.shippingDiscountSubtotal.toFixed(2),
+    row.shopVoucherDiscount.toFixed(2),
+    row.orderTotal.toFixed(2),
+    row.paymentMethod,
+    row.totalSaved.toFixed(2),
+    row.amount.toFixed(2),
+    row.itemSummary,
+  ])
 
-  for (const row of result.rows) {
-    const orderedAtLabel = formatUserFriendlyOrderedAt(row.orderedAt)
-    const cols = [
-      row.orderId,
-      orderedAtLabel,
-      row.status,
-      row.shopName,
-      row.merchandiseSubtotal.toFixed(2),
-      row.shippingFee.toFixed(2),
-      row.shippingDiscountSubtotal.toFixed(2),
-      row.shopVoucherDiscount.toFixed(2),
-      row.orderTotal.toFixed(2),
-      row.paymentMethod,
-      row.totalSaved.toFixed(2),
-      row.amount.toFixed(2),
-      row.itemSummary,
-      coreMetrics.positiveSpend,
-      coreMetrics.orderCount,
-      coreMetrics.completedCount,
-      coreMetrics.cancelledCount,
-      coreMetrics.totalSavedMetric,
-      coreMetrics.downloadedAt,
-    ]
-    lines.push(cols.map(escapeCsv).join(','))
+  const coreMetricRows: string[][] = [
+    ['positive_spend', result.positiveSpend.toFixed(2)],
+    ['order_count', String(result.orderCount)],
+    ['completed_count', String(result.completedCount)],
+    ['cancelled_count', String(result.cancelledCount)],
+    ['total_saved', result.totalSaved.toFixed(2)],
+    ['downloaded_at', downloadedAtLabel],
+  ]
+
+  const totalRows = Math.max(orderRows.length, coreMetricRows.length)
+  for (let index = 0; index < totalRows; index += 1) {
+    const orderCols =
+      orderRows[index] ??
+      [
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+      ]
+    const metricCols = coreMetricRows[index] ?? ['', '']
+    lines.push([...orderCols, '', ...metricCols].map(escapeCsv).join(','))
   }
 
   return lines.join('\n')
