@@ -435,6 +435,10 @@ export function PopupApp() {
 
       {error ? <p className="error-text">{error}</p> : null}
 
+      {stage === 'running' ? (
+        <p className="fineprint">Do not close this extension while calculating or fetching details.</p>
+      ) : null}
+
       {result ? (
         <section className="result-shell" aria-label="Calculation details">
           <div className="button-row">
