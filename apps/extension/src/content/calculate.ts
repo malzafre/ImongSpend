@@ -5,39 +5,27 @@ export function buildResearchResult(rowsInput: ResearchOrderRow[], notes: string
   const generatedAt = new Date().toISOString()
   const normalizedRows = normalizeAndDedupeRows(rowsInput)
 
-  const settledRows = normalizedRows.map((row) => {
-    const cancelAdjustment = isCancelledStatus(row.status) ? row.amount : 0
-    return {
-      ...row,
-      adjustmentAmount: round2(row.adjustmentAmount + cancelAdjustment),
-    }
-  })
-
-  const completedRows = settledRows.filter((row) => isCompletedStatus(row.status))
-  const cancelledRows = settledRows.filter((row) => isCancelledStatus(row.status))
+  const completedRows = normalizedRows.filter((row) => isCompletedStatus(row.status))
+  const cancelledRows = normalizedRows.filter((row) => isCancelledStatus(row.status))
   const positiveSpend = sum(completedRows.map((row) => row.amount))
-  const totalSaved = sum(settledRows.map((row) => row.totalSaved))
-  const totalAdjustments = sum(settledRows.map((row) => row.adjustmentAmount))
-  const estimatedGrandTotal = round2(positiveSpend - totalAdjustments)
+  const totalSaved = sum(completedRows.map((row) => row.totalSaved))
 
-  const datedRows = settledRows.filter((row) => row.orderedAt !== 'unknown')
+  const datedRows = normalizedRows.filter((row) => row.orderedAt !== 'unknown')
   const from = datedRows[0]?.orderedAt ?? generatedAt
   const to = datedRows.at(-1)?.orderedAt ?? from
 
   return {
     currency: 'PHP',
     generatedAt,
-    orderCount: settledRows.length,
+    orderCount: normalizedRows.length,
     completedCount: completedRows.length,
     cancelledCount: cancelledRows.length,
     positiveSpend,
     totalSaved,
-    totalAdjustments,
-    estimatedGrandTotal,
     from,
     to,
     notes,
-    rows: settledRows,
+    rows: normalizedRows,
   }
 }
 

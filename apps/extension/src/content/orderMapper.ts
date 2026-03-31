@@ -471,11 +471,11 @@ export function extractNextOffset(body: Record<string, unknown>): number | null 
 }
 
 export function isCompletedStatus(status: string): boolean {
-  return /(label_completed|completed|complete|received|delivered)/i.test(status)
+  return /(label_completed|completed|complete|received|delivered|success|succeeded|paid)/i.test(status)
 }
 
 export function isCancelledStatus(status: string): boolean {
-  return /(label_cancelled|label_canceled|cancelled|canceled|cancel)/i.test(status)
+  return /(label_cancelled|label_canceled|cancelled|canceled|cancel|refund|refunded|returned|return)/i.test(status)
 }
 
 function resolveOrderedAt(order: OrderLike, detail: Record<string, unknown> | null): string {

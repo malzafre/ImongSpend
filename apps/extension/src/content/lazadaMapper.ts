@@ -201,6 +201,13 @@ function parseTotalSummary(fields: Record<string, unknown> | undefined): ParsedT
       continue
     }
 
+    if (key.includes('coins')) {
+      const abs = Math.abs(value)
+      shopVoucherDiscount += abs
+      discountSubtotal += abs
+      continue
+    }
+
     if (key.includes('voucher') || key.includes('discount') || key.includes('coins')) {
       discountSubtotal += Math.abs(value)
     }

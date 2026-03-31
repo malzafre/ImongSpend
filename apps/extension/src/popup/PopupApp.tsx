@@ -14,9 +14,10 @@ type DetailResponse =
 
 type SavedSummary = {
   positiveSpend: number
+  totalSaved: number
   orderCount: number
   completedCount: number
-  estimatedGrandTotal: number
+  cancelledCount: number
   updatedAt: string
 }
 
@@ -434,8 +435,8 @@ export function PopupApp() {
               <strong>{result.completedCount.toLocaleString()}</strong>
             </article>
             <article className="stat-chip">
-              <p>Estimated grand total</p>
-              <strong>{currency.format(result.estimatedGrandTotal)}</strong>
+              <p>Total saved</p>
+              <strong>{currency.format(result.totalSaved)}</strong>
             </article>
           </div>
 
@@ -727,12 +728,10 @@ function resultToCsv(result: ResearchCalculationResult): string {
 
   lines.push('')
   lines.push(`"positive_spend",${result.positiveSpend.toFixed(2)}`)
-  lines.push(`"total_saved",${result.totalSaved.toFixed(2)}`)
-  lines.push(`"total_adjustments",${result.totalAdjustments.toFixed(2)}`)
-  lines.push(`"estimated_grand_total",${result.estimatedGrandTotal.toFixed(2)}`)
+  lines.push(`"order_count",${result.orderCount}`)
   lines.push(`"completed_count",${result.completedCount}`)
   lines.push(`"cancelled_count",${result.cancelledCount}`)
-  lines.push(`"order_count",${result.orderCount}`)
+  lines.push(`"total_saved",${result.totalSaved.toFixed(2)}`)
 
   return lines.join('\n')
 }
@@ -800,9 +799,10 @@ function mergeRowsWithDetails(rows: ResearchOrderRow[], enrichedRows: ResearchOr
 function resultToSavedSummary(result: ResearchCalculationResult): SavedSummary {
   return {
     positiveSpend: result.positiveSpend,
+    totalSaved: result.totalSaved,
     orderCount: result.orderCount,
     completedCount: result.completedCount,
-    estimatedGrandTotal: result.estimatedGrandTotal,
+    cancelledCount: result.cancelledCount,
     updatedAt: new Date().toISOString(),
   }
 }
@@ -831,16 +831,18 @@ function readSavedSummaryFromStorage(provider: PopupProvider): SavedSummary | nu
   try {
     const parsed = JSON.parse(raw) as Partial<SavedSummary>
     const positiveSpend = Number(parsed.positiveSpend)
+    const totalSaved = Number(parsed.totalSaved)
     const orderCount = Number(parsed.orderCount)
     const completedCount = Number(parsed.completedCount)
-    const estimatedGrandTotal = Number(parsed.estimatedGrandTotal)
+    const cancelledCount = Number(parsed.cancelledCount)
     const updatedAt = typeof parsed.updatedAt === 'string' ? parsed.updatedAt : ''
 
     if (
       !Number.isFinite(positiveSpend) ||
+      !Number.isFinite(totalSaved) ||
       !Number.isFinite(orderCount) ||
       !Number.isFinite(completedCount) ||
-      !Number.isFinite(estimatedGrandTotal) ||
+      !Number.isFinite(cancelledCount) ||
       updatedAt.length === 0
     ) {
       window.localStorage.removeItem(storageKey)
@@ -849,9 +851,10 @@ function readSavedSummaryFromStorage(provider: PopupProvider): SavedSummary | nu
 
     return {
       positiveSpend,
+      totalSaved,
       orderCount,
       completedCount,
-      estimatedGrandTotal,
+      cancelledCount,
       updatedAt,
     }
   } catch {

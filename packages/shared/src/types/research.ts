@@ -23,8 +23,6 @@ export interface ResearchCalculationResult {
   cancelledCount: number
   positiveSpend: number
   totalSaved: number
-  totalAdjustments: number
-  estimatedGrandTotal: number
   from: string
   to: string
   notes: string[]
