@@ -702,15 +702,27 @@ async function ensureContentScriptInjected(
 }
 
 function resultToCsv(result: ResearchCalculationResult): string {
+  const downloadedAt = new Date()
+  const downloadedAtLabel = formatUserFriendlyDateTime(downloadedAt)
   const lines: string[] = []
   lines.push(
-    'order_id,ordered_at,status,shop_name,merchandise_subtotal,shipping_fee,shipping_discount_subtotal,shop_voucher_discount,order_total,payment_method,total_saved,amount,item_summary',
+    'order_id,ordered_at,status,shop_name,merchandise_subtotal,shipping_fee,shipping_discount_subtotal,shop_voucher_discount,order_total,payment_method,total_saved,amount,item_summary,positive_spend,order_count,completed_count,cancelled_count,total_saved_metric,downloaded_at',
   )
 
+  const coreMetrics = {
+    positiveSpend: result.positiveSpend.toFixed(2),
+    orderCount: String(result.orderCount),
+    completedCount: String(result.completedCount),
+    cancelledCount: String(result.cancelledCount),
+    totalSavedMetric: result.totalSaved.toFixed(2),
+    downloadedAt: downloadedAtLabel,
+  }
+
   for (const row of result.rows) {
+    const orderedAtLabel = formatUserFriendlyOrderedAt(row.orderedAt)
     const cols = [
       row.orderId,
-      row.orderedAt,
+      orderedAtLabel,
       row.status,
       row.shopName,
       row.merchandiseSubtotal.toFixed(2),
@@ -722,16 +734,15 @@ function resultToCsv(result: ResearchCalculationResult): string {
       row.totalSaved.toFixed(2),
       row.amount.toFixed(2),
       row.itemSummary,
+      coreMetrics.positiveSpend,
+      coreMetrics.orderCount,
+      coreMetrics.completedCount,
+      coreMetrics.cancelledCount,
+      coreMetrics.totalSavedMetric,
+      coreMetrics.downloadedAt,
     ]
     lines.push(cols.map(escapeCsv).join(','))
   }
-
-  lines.push('')
-  lines.push(`"positive_spend",${result.positiveSpend.toFixed(2)}`)
-  lines.push(`"order_count",${result.orderCount}`)
-  lines.push(`"completed_count",${result.completedCount}`)
-  lines.push(`"cancelled_count",${result.cancelledCount}`)
-  lines.push(`"total_saved",${result.totalSaved.toFixed(2)}`)
 
   return lines.join('\n')
 }
@@ -880,6 +891,31 @@ function formatLastUpdatedLabel(updatedAt: string, formatter: Intl.DateTimeForma
 
   return `Last updated: ${formatter.format(date)}`
 }
+
+function formatUserFriendlyOrderedAt(orderedAt: string): string {
+  if (orderedAt === 'unknown') {
+    return 'unknown'
+  }
+
+  const parsed = new Date(orderedAt)
+  if (Number.isNaN(parsed.getTime())) {
+    return orderedAt
+  }
+
+  return formatUserFriendlyDateTime(parsed)
+}
+
+function formatUserFriendlyDateTime(date: Date): string {
+  const day = String(date.getDate()).padStart(2, '0')
+  const month = MONTH_NAMES[date.getMonth()] ?? 'Jan'
+  const year = date.getFullYear()
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+  return `${day} ${month} ${year} ${hours}:${minutes}:${seconds}`
+}
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 function isConnectionError(message: string): boolean {
   return /(receiving end does not exist|could not establish connection|no tab with id|message port closed|extension context invalidated)/i.test(

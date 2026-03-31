@@ -95,7 +95,7 @@ function sortRows(a: ResearchOrderRow, b: ResearchOrderRow): number {
     return -1
   }
 
-  return a.orderedAt.localeCompare(b.orderedAt)
+  return b.orderedAt.localeCompare(a.orderedAt)
 }
 
 function sum(values: number[]): number {
