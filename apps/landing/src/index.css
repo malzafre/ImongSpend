@@ -1,12 +1,15 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Manrope:wght@400;500;700&display=swap');
 
 :root {
-  --bg: #f7f4ea;
-  --panel: rgba(255, 255, 255, 0.74);
-  --line: #d8d2c4;
-  --text: #343027;
-  --heading-color: #16140f;
-  --accent: #17708b;
+  --bg: #f5f4ec;
+  --panel: rgba(255, 255, 255, 0.76);
+  --line: #d8ddd2;
+  --line-strong: #b8c8bf;
+  --text: #29343a;
+  --text-soft: #4b5e64;
+  --heading-color: #142027;
+  --accent: #129083;
+  --accent-deep: #0d6f80;
   --font-body: 'Manrope', 'Segoe UI', sans-serif;
   --font-heading: 'Space Grotesk', 'Trebuchet MS', sans-serif;
 }
@@ -22,8 +25,8 @@ body {
   font-family: var(--font-body);
   line-height: 1.55;
   background:
-    radial-gradient(circle at 10% 0%, rgba(23, 112, 139, 0.12), transparent 34%),
-    radial-gradient(circle at 95% 10%, rgba(244, 162, 97, 0.22), transparent 35%),
+    radial-gradient(circle at 10% 2%, rgba(18, 144, 131, 0.16), transparent 34%),
+    radial-gradient(circle at 96% 9%, rgba(241, 165, 87, 0.2), transparent 35%),
     var(--bg);
 }
 
