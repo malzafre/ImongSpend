@@ -211,12 +211,13 @@ function inferTotalSavedFromList(
     ...knownAmounts,
     fallback,
   })
+  const fallbackSavings = round2(Math.max(0, fallback))
 
   if (listSaved !== null) {
-    return Math.max(0, toShopeeMoney(listSaved, source), computed)
+    return Math.max(0, toShopeeMoney(listSaved, source), computed, fallbackSavings)
   }
 
-  return computed
+  return Math.max(computed, fallbackSavings)
 }
 
 function inferShippingFeeFromList(order: Record<string, unknown>, source: OrderSource): number {
@@ -385,24 +386,17 @@ function resolveTotalSaved(
     fallback: number
   },
 ): number {
+  void params.fallback
+
   const baselineTotal = round2(params.merchandiseSubtotal + params.shippingFee)
-  const canInferFromTotal = baselineTotal > 0 && params.orderTotal > 0 && baselineTotal >= params.orderTotal
-  const inferredDiscountSubtotal = Math.max(
-    0,
-    canInferFromTotal ? round2(baselineTotal - params.orderTotal) : 0,
-  )
+  const canInferFromTotal = baselineTotal > 0 && params.orderTotal >= 0 && baselineTotal >= params.orderTotal
+  const inferredDiscountSubtotal = canInferFromTotal ? round2(baselineTotal - params.orderTotal) : 0
   const knownDiscountSubtotal = round2(
     Math.max(0, params.shippingDiscountSubtotal) + Math.max(0, params.shopVoucherDiscount),
   )
   const explicitDiscountSubtotal = round2(Math.max(0, params.explicitDiscountSubtotal ?? 0))
-  const structuredCheckoutSavings = Math.max(knownDiscountSubtotal, explicitDiscountSubtotal)
 
-  if (structuredCheckoutSavings > 0) {
-    const checkoutSavings = Math.max(structuredCheckoutSavings, inferredDiscountSubtotal)
-    return round2(checkoutSavings + Math.max(0, params.fallback))
-  }
-
-  return round2(Math.max(inferredDiscountSubtotal, Math.max(0, params.fallback)))
+  return round2(Math.max(knownDiscountSubtotal, explicitDiscountSubtotal, inferredDiscountSubtotal))
 }
 
 function extractItems(sourceObject: Record<string, unknown>): Record<string, unknown>[] {
@@ -471,7 +465,7 @@ export function extractNextOffset(body: Record<string, unknown>): number | null 
 }
 
 export function isCompletedStatus(status: string): boolean {
-  return /(label_completed|completed|complete|received|delivered|success|succeeded|paid)/i.test(status)
+  return /(label_completed|completed|complete|received|delivered|success|succeeded|\bpaid\b)/i.test(status)
 }
 
 export function isCancelledStatus(status: string): boolean {

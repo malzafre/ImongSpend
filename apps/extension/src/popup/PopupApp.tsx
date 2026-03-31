@@ -93,6 +93,12 @@ export function PopupApp() {
   }, [])
 
   useEffect(() => {
+    setResult(null)
+    setError(null)
+    setStage('idle')
+  }, [])
+
+  useEffect(() => {
     window.localStorage.setItem(PROVIDER_SELECTION_KEY, provider)
     setSavedSummary(readSavedSummaryFromStorage(provider))
     setResult(null)
@@ -194,10 +200,10 @@ export function PopupApp() {
       }
 
       const mergedRows = mergeRowsWithDetails(result.rows, response.rows)
-      const mergedResult: ResearchCalculationResult = {
+      const mergedResult = recomputeResultMetrics({
         ...result,
         rows: mergedRows,
-      }
+      })
 
       triggerCsvDownload(resultToCsv(mergedResult), provider)
 
@@ -421,25 +427,16 @@ export function PopupApp() {
 
       {lastUpdatedLabel ? <p className="status-meta">{lastUpdatedLabel}</p> : null}
 
-      <button className="action-btn" onClick={() => void handleCalculate()} disabled={stage === 'running'}>
-        {stage === 'running' ? 'Calculating Spend...' : hasSavedSummary ? 'Recalculate My Spending' : 'Calculate My Spending'}
-      </button>
+      {!result ? (
+        <button className="action-btn" onClick={() => void handleCalculate()} disabled={stage === 'running'}>
+          {stage === 'running' ? 'Calculating Spend...' : hasSavedSummary ? 'Recalculate My Spending' : 'Calculate My Spending'}
+        </button>
+      ) : null}
 
       {error ? <p className="error-text">{error}</p> : null}
 
       {result ? (
         <section className="result-shell" aria-label="Calculation details">
-          <div className="stats-grid">
-            <article className="stat-chip">
-              <p>Completed orders</p>
-              <strong>{result.completedCount.toLocaleString()}</strong>
-            </article>
-            <article className="stat-chip">
-              <p>Total saved</p>
-              <strong>{currency.format(result.totalSaved)}</strong>
-            </article>
-          </div>
-
           <div className="button-row">
             <button className="download-btn" onClick={() => void handleDownloadCsv()} disabled={stage === 'running'}>
               {stage === 'running' ? 'Fetching details...' : 'Download CSV'}
@@ -702,6 +699,7 @@ async function ensureContentScriptInjected(
 }
 
 function resultToCsv(result: ResearchCalculationResult): string {
+  const normalizedResult = recomputeResultMetrics(result)
   const downloadedAt = new Date()
   const downloadedAtLabel = formatUserFriendlyDateTime(downloadedAt)
   const lines: string[] = []
@@ -724,7 +722,9 @@ function resultToCsv(result: ResearchCalculationResult): string {
   const metricHeaders = ['core_metric', 'core_value']
   lines.push([...orderHeaders, ...separatorHeader, ...metricHeaders].map(escapeCsv).join(','))
 
-  const orderRows = result.rows.map((row) => [
+  const sortedRows = sortRowsForCsv(normalizedResult.rows)
+
+  const orderRows = sortedRows.map((row) => [
     row.orderId,
     formatUserFriendlyOrderedAt(row.orderedAt),
     row.status,
@@ -737,15 +737,15 @@ function resultToCsv(result: ResearchCalculationResult): string {
     row.paymentMethod,
     row.totalSaved.toFixed(2),
     row.amount.toFixed(2),
-    row.itemSummary,
+    formatCsvItemSummary(row.itemSummary),
   ])
 
   const coreMetricRows: string[][] = [
-    ['positive_spend', result.positiveSpend.toFixed(2)],
-    ['order_count', String(result.orderCount)],
-    ['completed_count', String(result.completedCount)],
-    ['cancelled_count', String(result.cancelledCount)],
-    ['total_saved', result.totalSaved.toFixed(2)],
+    ['positive_spend', normalizedResult.positiveSpend.toFixed(2)],
+    ['order_count', String(normalizedResult.orderCount)],
+    ['completed_count', String(normalizedResult.completedCount)],
+    ['cancelled_count', String(normalizedResult.cancelledCount)],
+    ['total_saved', normalizedResult.totalSaved.toFixed(2)],
     ['downloaded_at', downloadedAtLabel],
   ]
 
@@ -773,6 +773,49 @@ function resultToCsv(result: ResearchCalculationResult): string {
   }
 
   return lines.join('\n')
+}
+
+function sortRowsForCsv(rows: ResearchOrderRow[]): ResearchOrderRow[] {
+  return [...rows].sort((a, b) => {
+    const aTimestamp = parseOrderedAtTimestamp(a.orderedAt)
+    const bTimestamp = parseOrderedAtTimestamp(b.orderedAt)
+
+    if (aTimestamp !== null && bTimestamp !== null) {
+      return bTimestamp - aTimestamp
+    }
+
+    if (aTimestamp !== null) {
+      return -1
+    }
+
+    if (bTimestamp !== null) {
+      return 1
+    }
+
+    return b.orderId.localeCompare(a.orderId)
+  })
+}
+
+function parseOrderedAtTimestamp(value: string): number | null {
+  if (!value || value === 'unknown') {
+    return null
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return null
+  }
+
+  return parsed.getTime()
+}
+
+function formatCsvItemSummary(value: string): string {
+  const compact = value.replace(/\s+/g, ' ').trim()
+  if (compact.length <= 80) {
+    return compact
+  }
+
+  return `${compact.slice(0, 77).trimEnd()}...`
 }
 
 function escapeCsv(value: string): string {
@@ -833,6 +876,60 @@ function mergeRowsWithDetails(rows: ResearchOrderRow[], enrichedRows: ResearchOr
       itemSummary: enriched.itemSummary,
     }
   })
+}
+
+function recomputeResultMetrics(result: ResearchCalculationResult): ResearchCalculationResult {
+  const completedRows = result.rows.filter((row) => isCompletedStatusForMetrics(row.status))
+  const cancelledRows = result.rows.filter((row) => isCancelledStatusForMetrics(row.status))
+  const positiveSpend = sumMetrics(completedRows.map((row) => row.amount))
+  const totalSaved = sumMetrics(completedRows.map((row) => row.totalSaved))
+  const range = resolveResultDateRange(result.rows)
+
+  return {
+    ...result,
+    orderCount: result.rows.length,
+    completedCount: completedRows.length,
+    cancelledCount: cancelledRows.length,
+    positiveSpend,
+    totalSaved,
+    from: range.from,
+    to: range.to,
+  }
+}
+
+function resolveResultDateRange(rows: ResearchOrderRow[]): { from: string; to: string } {
+  const timestamps = rows
+    .map((row) => parseOrderedAtTimestamp(row.orderedAt))
+    .filter((value): value is number => value !== null)
+
+  if (timestamps.length === 0) {
+    const now = new Date().toISOString()
+    return { from: now, to: now }
+  }
+
+  const min = Math.min(...timestamps)
+  const max = Math.max(...timestamps)
+
+  return {
+    from: new Date(min).toISOString(),
+    to: new Date(max).toISOString(),
+  }
+}
+
+function isCompletedStatusForMetrics(status: string): boolean {
+  return /(label_completed|completed|complete|received|delivered|success|succeeded|\bpaid\b)/i.test(status)
+}
+
+function isCancelledStatusForMetrics(status: string): boolean {
+  return /(label_cancelled|label_canceled|cancelled|canceled|cancel|refund|refunded|returned|return)/i.test(status)
+}
+
+function sumMetrics(values: number[]): number {
+  return round2(values.reduce((acc, value) => acc + value, 0))
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100
 }
 
 function resultToSavedSummary(result: ResearchCalculationResult): SavedSummary {

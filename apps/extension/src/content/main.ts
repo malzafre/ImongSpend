@@ -86,6 +86,7 @@ async function runResearchCalculation(
   const maxPages = clampMaxPages(maxPagesInput)
   const notes: string[] = []
   const stageTimeoutMs = provider === 'lazada' ? Math.max(90_000, maxPages * 2_400) : 12_000
+  let collectedRows: ResearchOrderRow[] = []
 
   try {
     const bridgeResult = await withStageTimeout(
@@ -97,11 +98,10 @@ async function runResearchCalculation(
     if (bridgeResult.notes.length > 0) {
       notes.push(...bridgeResult.notes)
     }
-    return buildResearchResult(bridgeResult.rows, notes)
+    collectedRows = bridgeResult.rows
   } catch (error) {
     void error
-  }
-
+    
     const fallbackTimeoutMs = provider === 'lazada' ? stageTimeoutMs : 8_000
     const apiResult = await withStageTimeout(
       collectRowsFallbackForProvider(provider, maxPages),
@@ -109,11 +109,13 @@ async function runResearchCalculation(
       'Content API collection timed out.',
     )
 
-  if (apiResult.notes.length > 0) {
-    notes.push(...apiResult.notes)
+    if (apiResult.notes.length > 0) {
+      notes.push(...apiResult.notes)
+    }
+    collectedRows = apiResult.rows
   }
 
-  return buildResearchResult(apiResult.rows, notes)
+  return buildResearchResult(collectedRows, notes)
 }
 
 function clampMaxPages(input: number | undefined): number {
