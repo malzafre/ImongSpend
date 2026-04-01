@@ -46,6 +46,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: extension-checks
     runs-on: ubuntu-latest
+    concurrency:
+      group: extension-auto-release-${{ github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -76,7 +79,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          latest_tag="$(git tag --list 'v*' --sort=-version:refname | head -n 1)"
+          git fetch --tags --force origin
+
+          latest_tag="$(git tag --merged HEAD --list 'v*' --sort=-version:refname | head -n 1)"
           head_tag="$(git tag --points-at HEAD --list 'v*' --sort=-version:refname | head -n 1)"
 
           if [[ -n "$head_tag" ]]; then
@@ -144,6 +149,42 @@ jobs:
               echo "**Full Diff**: ${repo_url}/compare/${last_tag}...${tag_name}"
             fi
           } > release-notes.md
+
+      - name: Sync extension version to release tag
+        if: steps.version.outputs.release_needed == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          node - <<'NODE'
+          const fs = require('node:fs')
+
+          const releaseTag = process.env.RELEASE_TAG
+          if (!releaseTag) {
+            throw new Error('Missing RELEASE_TAG')
+          }
+
+          const version = releaseTag.replace(/^v/, '')
+          const files = [
+            'apps/extension/public/manifest.json',
+            'apps/extension/package.json',
+          ]
+
+          for (const file of files) {
+            const raw = fs.readFileSync(file, 'utf8')
+            const json = JSON.parse(raw)
+            json.version = version
+            fs.writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`)
+          }
+
+          console.log(`Synchronized extension version to ${version}`)
+          NODE
+
+      - name: Build extension with release version
+        if: steps.version.outputs.release_needed == 'true'
+        run: npm run build:extension
 
       - name: Package extension zip
         if: steps.version.outputs.release_needed == 'true'
