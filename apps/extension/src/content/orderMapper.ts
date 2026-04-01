@@ -98,7 +98,7 @@ export function mapOrderToRow(order: OrderLike, source: OrderSource = 'unknown')
 
   return {
     orderId,
-    orderedAt: resolveOrderedAt(order, detailRecord),
+    orderedAt: resolveOrderedAt(order, detailRecord, source),
     status,
     shopName,
     amount: orderTotal,
@@ -463,7 +463,7 @@ export function isCancelledStatus(status: string): boolean {
   return /(label_cancelled|label_canceled|cancelled|canceled|cancel|refund|refunded|returned|return)/i.test(status)
 }
 
-function resolveOrderedAt(order: OrderLike, detail: Record<string, unknown> | null): string {
+function resolveOrderedAt(order: OrderLike, detail: Record<string, unknown> | null, source: OrderSource): string {
   const completedUnix = findUnixTimestampByLabel(detail, 'completed_time')
   if (completedUnix !== null) {
     const completedIso = unixToIso(completedUnix)
@@ -478,6 +478,10 @@ function resolveOrderedAt(order: OrderLike, detail: Record<string, unknown> | nu
     if (orderIso) {
       return orderIso
     }
+  }
+
+  if (source === 'order_list' || source === 'all_order_list') {
+    return 'unknown'
   }
 
   const epoch =

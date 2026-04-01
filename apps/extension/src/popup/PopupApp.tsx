@@ -19,6 +19,9 @@ type SavedSummary = {
   completedCount: number
   cancelledCount: number
   updatedAt: string
+  from?: string
+  to?: string
+  dateRangeReady?: boolean
 }
 
 const STEPS_BY_PROVIDER: Record<PopupProvider, string[]> = {
@@ -184,7 +187,7 @@ export function PopupApp() {
 
     try {
       if (provider === 'lazada' || provider === 'foodpanda') {
-        triggerCsvDownload(resultToCsv(result), provider)
+        triggerCsvDownload(resultToCsv(result, provider), provider)
         setStage('done')
         return
       }
@@ -192,7 +195,7 @@ export function PopupApp() {
       const orderIds = getUniqueKnownOrderIds(result.rows)
 
       if (orderIds.length === 0) {
-        triggerCsvDownload(resultToCsv(result), provider)
+        triggerCsvDownload(resultToCsv(result, provider), provider)
         setStage('done')
         return
       }
@@ -215,7 +218,7 @@ export function PopupApp() {
         rows: mergedRows,
       })
 
-      triggerCsvDownload(resultToCsv(mergedResult), provider)
+      triggerCsvDownload(resultToCsv(mergedResult, provider), provider)
 
       const summary = resultToSavedSummary(mergedResult)
       persistSavedSummary(summary, provider)
@@ -283,6 +286,7 @@ export function PopupApp() {
 
   function handleClearSavedResults(): void {
     window.localStorage.removeItem(getSavedSummaryStorageKey(provider))
+    window.localStorage.removeItem(SAVED_SUMMARY_KEY)
     setSavedSummary(null)
     setResult(null)
     setError(null)
@@ -306,6 +310,7 @@ export function PopupApp() {
   const totalSpent = savedSummary?.positiveSpend ?? 0
   const totalOrders = savedSummary?.orderCount ?? 0
   const lastUpdatedLabel = savedSummary ? formatLastUpdatedLabel(savedSummary.updatedAt, dateTimeFormatter) : null
+  const dateRangeLabel = savedSummary ? formatDateRangeLabel(savedSummary.from, savedSummary.to) : null
   const providerSteps = STEPS_BY_PROVIDER[provider]
 
   if (!policyReady) {
@@ -432,6 +437,7 @@ export function PopupApp() {
         <article className="metric-card metric-primary">
           <p className="subhead">Total Spent</p>
           <p className="amount">{currency.format(totalSpent)}</p>
+          {dateRangeLabel ? <p className="metric-meta">{dateRangeLabel}</p> : null}
         </article>
 
         <article className="metric-card metric-secondary">
@@ -731,11 +737,12 @@ async function ensureContentScriptInjected(
   })
 }
 
-function resultToCsv(result: ResearchCalculationResult): string {
+function resultToCsv(result: ResearchCalculationResult, provider: PopupProvider): string {
   const normalizedResult = recomputeResultMetrics(result)
   const downloadedAt = new Date()
   const downloadedAtLabel = formatUserFriendlyDateTime(downloadedAt)
   const lines: string[] = []
+  const includeFoodpandaOtherFees = provider === 'foodpanda'
   const orderHeaders = [
     'order_id',
     'ordered_at',
@@ -750,6 +757,7 @@ function resultToCsv(result: ResearchCalculationResult): string {
     'total_saved',
     'amount',
     'item_summary',
+    ...(includeFoodpandaOtherFees ? ['other_fees'] : []),
   ]
   const separatorHeader = ['']
   const metricHeaders = ['core_metric', 'core_value']
@@ -757,21 +765,31 @@ function resultToCsv(result: ResearchCalculationResult): string {
 
   const sortedRows = sortRowsForCsv(normalizedResult.rows)
 
-  const orderRows = sortedRows.map((row) => [
-    row.orderId,
-    formatUserFriendlyOrderedAt(row.orderedAt),
-    row.status,
-    row.shopName,
-    row.merchandiseSubtotal.toFixed(2),
-    row.shippingFee.toFixed(2),
-    row.shippingDiscountSubtotal.toFixed(2),
-    row.shopVoucherDiscount.toFixed(2),
-    row.orderTotal.toFixed(2),
-    row.paymentMethod,
-    row.totalSaved.toFixed(2),
-    row.amount.toFixed(2),
-    formatCsvItemSummary(row.itemSummary),
-  ])
+  const orderRows = sortedRows.map((row) => {
+    const baseColumns = [
+      row.orderId,
+      formatUserFriendlyOrderedAt(row.orderedAt),
+      row.status,
+      row.shopName,
+      row.merchandiseSubtotal.toFixed(2),
+      row.shippingFee.toFixed(2),
+      row.shippingDiscountSubtotal.toFixed(2),
+      row.shopVoucherDiscount.toFixed(2),
+      row.orderTotal.toFixed(2),
+      row.paymentMethod,
+      row.totalSaved.toFixed(2),
+      row.amount.toFixed(2),
+      formatCsvItemSummary(row.itemSummary),
+    ]
+
+    if (!includeFoodpandaOtherFees) {
+      return baseColumns
+    }
+
+    const otherFees = inferFoodpandaOtherFees(row)
+
+    return [...baseColumns, otherFees.toFixed(2)]
+  })
 
   const coreMetricRows: string[][] = [
     ['positive_spend', normalizedResult.positiveSpend.toFixed(2)],
@@ -780,27 +798,15 @@ function resultToCsv(result: ResearchCalculationResult): string {
     ['cancelled_count', String(normalizedResult.cancelledCount)],
     ['total_saved', normalizedResult.totalSaved.toFixed(2)],
     ['downloaded_at', downloadedAtLabel],
+    ...(includeFoodpandaOtherFees
+      ? [['other_fees_note', 'These data contain charity, service fee, rider tip, and other platform fees.']]
+      : []),
   ]
 
   const totalRows = Math.max(orderRows.length, coreMetricRows.length)
+  const emptyOrderCols = orderHeaders.map(() => '')
   for (let index = 0; index < totalRows; index += 1) {
-    const orderCols =
-      orderRows[index] ??
-      [
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-        '',
-      ]
+    const orderCols = orderRows[index] ?? emptyOrderCols
     const metricCols = coreMetricRows[index] ?? ['', '']
     lines.push([...orderCols, '', ...metricCols].map(escapeCsv).join(','))
   }
@@ -834,12 +840,31 @@ function parseOrderedAtTimestamp(value: string): number | null {
     return null
   }
 
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
+  const trimmed = value.trim()
+  if (!trimmed) {
     return null
   }
 
-  return parsed.getTime()
+  let timestamp = Number.NaN
+
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const numeric = Number(trimmed)
+    if (Number.isFinite(numeric) && numeric > 0) {
+      timestamp = numeric > 9_999_999_999 ? numeric : numeric * 1000
+    }
+  } else {
+    timestamp = new Date(trimmed).getTime()
+  }
+
+  if (!Number.isFinite(timestamp)) {
+    return null
+  }
+
+  if (timestamp < MIN_VALID_ORDER_TIMESTAMP || timestamp > Date.now() + FUTURE_TOLERANCE_MS) {
+    return null
+  }
+
+  return timestamp
 }
 
 function formatCsvItemSummary(value: string): string {
@@ -936,8 +961,7 @@ function resolveResultDateRange(rows: ResearchOrderRow[]): { from: string; to: s
     .filter((value): value is number => value !== null)
 
   if (timestamps.length === 0) {
-    const now = new Date().toISOString()
-    return { from: now, to: now }
+    return { from: 'unknown', to: 'unknown' }
   }
 
   const min = Math.min(...timestamps)
@@ -966,6 +990,9 @@ function round2(value: number): number {
 }
 
 function resultToSavedSummary(result: ResearchCalculationResult): SavedSummary {
+  const fromTimestamp = parseOrderedAtTimestamp(result.from)
+  const toTimestamp = parseOrderedAtTimestamp(result.to)
+
   return {
     positiveSpend: result.positiveSpend,
     totalSaved: result.totalSaved,
@@ -973,7 +1000,20 @@ function resultToSavedSummary(result: ResearchCalculationResult): SavedSummary {
     completedCount: result.completedCount,
     cancelledCount: result.cancelledCount,
     updatedAt: new Date().toISOString(),
+    from: fromTimestamp !== null ? result.from : 'unknown',
+    to: toTimestamp !== null ? result.to : 'unknown',
+    dateRangeReady: fromTimestamp !== null && toTimestamp !== null,
   }
+}
+
+function inferFoodpandaOtherFees(row: ResearchOrderRow): number {
+  const knownPayable =
+    row.merchandiseSubtotal +
+    row.shippingFee -
+    Math.max(0, row.shippingDiscountSubtotal) -
+    Math.max(0, row.shopVoucherDiscount)
+
+  return round2(Math.max(0, row.orderTotal - knownPayable))
 }
 
 function persistSavedSummary(summary: SavedSummary, provider: PopupProvider): void {
@@ -983,15 +1023,6 @@ function persistSavedSummary(summary: SavedSummary, provider: PopupProvider): vo
 function readSavedSummaryFromStorage(provider: PopupProvider): SavedSummary | null {
   const storageKey = getSavedSummaryStorageKey(provider)
   const raw = window.localStorage.getItem(storageKey)
-
-  if (!raw && provider === 'shopee') {
-    const legacyRaw = window.localStorage.getItem(SAVED_SUMMARY_KEY)
-    if (legacyRaw) {
-      window.localStorage.setItem(storageKey, legacyRaw)
-      window.localStorage.removeItem(SAVED_SUMMARY_KEY)
-      return readSavedSummaryFromStorage(provider)
-    }
-  }
 
   if (!raw) {
     return null
@@ -1005,6 +1036,9 @@ function readSavedSummaryFromStorage(provider: PopupProvider): SavedSummary | nu
     const completedCount = Number(parsed.completedCount)
     const cancelledCount = Number(parsed.cancelledCount)
     const updatedAt = typeof parsed.updatedAt === 'string' ? parsed.updatedAt : ''
+    const from = typeof parsed.from === 'string' ? parsed.from : undefined
+    const to = typeof parsed.to === 'string' ? parsed.to : undefined
+    const dateRangeReady = parsed.dateRangeReady === true
 
     if (
       !Number.isFinite(positiveSpend) ||
@@ -1025,6 +1059,9 @@ function readSavedSummaryFromStorage(provider: PopupProvider): SavedSummary | nu
       completedCount,
       cancelledCount,
       updatedAt,
+      from,
+      to,
+      dateRangeReady,
     }
   } catch {
     window.localStorage.removeItem(storageKey)
@@ -1058,6 +1095,25 @@ function formatLastUpdatedLabel(updatedAt: string, formatter: Intl.DateTimeForma
   return `Last updated: ${formatter.format(date)}`
 }
 
+function formatDateRangeLabel(from: string | undefined, to: string | undefined): string | null {
+  const fromTimestamp = parseOrderedAtTimestamp(from ?? '')
+  const toTimestamp = parseOrderedAtTimestamp(to ?? '')
+
+  if (fromTimestamp === null || toTimestamp === null) {
+    return 'Date range: unavailable'
+  }
+
+  const minTimestamp = Math.min(fromTimestamp, toTimestamp)
+  const maxTimestamp = Math.max(fromTimestamp, toTimestamp)
+
+  const monthFormatter = new Intl.DateTimeFormat('en-PH', {
+    month: 'short',
+    year: 'numeric',
+  })
+
+  return `Date range: ${monthFormatter.format(new Date(minTimestamp))} - ${monthFormatter.format(new Date(maxTimestamp))}`
+}
+
 function formatUserFriendlyOrderedAt(orderedAt: string): string {
   if (orderedAt === 'unknown') {
     return 'unknown'
@@ -1082,6 +1138,8 @@ function formatUserFriendlyDateTime(date: Date): string {
 }
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const MIN_VALID_ORDER_TIMESTAMP = Date.UTC(2000, 0, 1)
+const FUTURE_TOLERANCE_MS = 7 * 24 * 60 * 60 * 1000
 
 function isConnectionError(message: string): boolean {
   return /(receiving end does not exist|could not establish connection|no tab with id|message port closed|extension context invalidated)/i.test(

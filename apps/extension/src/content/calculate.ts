@@ -10,9 +10,16 @@ export function buildResearchResult(rowsInput: ResearchOrderRow[], notes: string
   const positiveSpend = sum(completedRows.map((row) => row.amount))
   const totalSaved = sum(completedRows.map((row) => row.totalSaved))
 
-  const datedRows = normalizedRows.filter((row) => row.orderedAt !== 'unknown')
-  const from = datedRows[0]?.orderedAt ?? generatedAt
-  const to = datedRows.at(-1)?.orderedAt ?? from
+  const datedTimestamps = normalizedRows
+    .map((row) => parseOrderedAtTimestamp(row.orderedAt))
+    .filter((timestamp): timestamp is number => timestamp !== null)
+
+  const from = datedTimestamps.length > 0
+    ? new Date(Math.min(...datedTimestamps)).toISOString()
+    : 'unknown'
+  const to = datedTimestamps.length > 0
+    ? new Date(Math.max(...datedTimestamps)).toISOString()
+    : 'unknown'
 
   return {
     currency: 'PHP',
@@ -105,3 +112,38 @@ function sum(values: number[]): number {
 function round2(value: number): number {
   return Math.round(value * 100) / 100
 }
+
+function parseOrderedAtTimestamp(value: string): number | null {
+  if (!value || value === 'unknown') {
+    return null
+  }
+
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  let timestamp = Number.NaN
+
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const numeric = Number(trimmed)
+    if (Number.isFinite(numeric) && numeric > 0) {
+      timestamp = numeric > 9_999_999_999 ? numeric : numeric * 1000
+    }
+  } else {
+    timestamp = new Date(trimmed).getTime()
+  }
+
+  if (!Number.isFinite(timestamp)) {
+    return null
+  }
+
+  if (timestamp < MIN_VALID_ORDER_TIMESTAMP || timestamp > Date.now() + FUTURE_TOLERANCE_MS) {
+    return null
+  }
+
+  return timestamp
+}
+
+const MIN_VALID_ORDER_TIMESTAMP = Date.UTC(2000, 0, 1)
+const FUTURE_TOLERANCE_MS = 7 * 24 * 60 * 60 * 1000

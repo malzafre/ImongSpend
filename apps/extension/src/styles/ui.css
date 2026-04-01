@@ -516,6 +516,12 @@ h2 {
   color: #0d6670;
 }
 
+.metric-meta {
+  margin: 0.36rem 0 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
+}
+
 .stats-grid {
   margin-top: 0.66rem;
   display: grid;
