@@ -69,7 +69,10 @@ jobs:
             exit 1
           fi
 
+          tag_commit_sha="$(git rev-parse "refs/tags/$tag_name^{commit}")"
+
           echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
+          echo "tag_commit_sha=$tag_commit_sha" >> "$GITHUB_OUTPUT"
 
       - name: Checkout release tag
         shell: bash
@@ -137,6 +140,6 @@ jobs:
         with:
           name: ImongSpend Extension ${{ steps.tag.outputs.tag_name }}
           tag_name: ${{ steps.tag.outputs.tag_name }}
-          target_commitish: ${{ steps.tag.outputs.tag_name }}
+          target_commitish: ${{ steps.tag.outputs.tag_commit_sha }}
           generate_release_notes: true
           files: artifacts/imongspend-extension-${{ steps.tag.outputs.tag_name }}.zip
