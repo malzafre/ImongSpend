@@ -1,4 +1,4 @@
-<img width="390" height="598" alt="image" src="https://github.com/user-attachments/assets/b804871c-865f-444c-b8db-cfd3e7e062cd" />
+<img width="1200" height="630" alt="imong-spend" src="https://github.com/user-attachments/assets/ea97c58a-f566-48ff-9df4-49ef8a892e15" />
 
 # ImongSpend
 
