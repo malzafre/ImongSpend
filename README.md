@@ -1,3 +1,5 @@
+<img width="390" height="598" alt="image" src="https://github.com/user-attachments/assets/b804871c-865f-444c-b8db-cfd3e7e062cd" />
+
 # ImongSpend
 
 ImongSpend is a browser extension + landing page project for estimating marketplace spending without manual spreadsheet work.
