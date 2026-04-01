@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          latest_tag="$(git tag --list 'v*' --sort=-version:refname | head -n 1)"
+          latest_tag="$(git tag --merged HEAD --list 'v*' --sort=-version:refname | head -n 1)"
           head_tag="$(git tag --points-at HEAD --list 'v*' --sort=-version:refname | head -n 1)"
 
           if [[ -n "$head_tag" ]]; then
