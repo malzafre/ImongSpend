@@ -10,7 +10,12 @@
     "48": "extension-logo.png",
     "128": "extension-logo.png"
   },
-  "permissions": ["storage", "activeTab", "tabs", "scripting"],
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs",
+    "scripting"
+  ],
   "host_permissions": [
     "https://*.shopee.ph/*",
     "https://*.shopee.com/*",
@@ -95,13 +100,17 @@
         "https://*.foodpanda.com.kh/*",
         "https://*.foodpanda.kh/*"
       ],
-      "js": ["assets/content.js"],
+      "js": [
+        "assets/content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["page-bridge.js"],
+      "resources": [
+        "page-bridge.js"
+      ],
       "matches": [
         "https://*.shopee.ph/*",
         "https://*.shopee.com/*",
