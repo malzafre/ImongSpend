@@ -1,0 +1,142 @@
+name: Extension Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing tag to release (e.g. v0.2.4)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  extension-release:
+    name: Publish Extension Release
+    runs-on: ubuntu-latest
+    concurrency:
+      group: extension-release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            tag_name="$REF_NAME"
+          else
+            tag_name="$INPUT_TAG_NAME"
+          fi
+
+          if [[ -z "$tag_name" ]]; then
+            echo "Missing release tag name." >&2
+            exit 1
+          fi
+
+          if [[ ! "$tag_name" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid tag format: $tag_name. Expected vMAJOR.MINOR.PATCH." >&2
+            exit 1
+          fi
+
+          git fetch --tags --force origin
+
+          if ! git rev-parse "refs/tags/$tag_name" >/dev/null 2>&1; then
+            echo "Tag does not exist on origin: $tag_name" >&2
+            exit 1
+          fi
+
+          echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "refs/tags/${{ steps.tag.outputs.tag_name }}"
+
+      - name: Validate version matches release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          tag_version="${RELEASE_TAG#v}"
+          manifest_version="$(node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync("apps/extension/public/manifest.json","utf8")).version)')"
+          package_version="$(node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync("apps/extension/package.json","utf8")).version)')"
+
+          semver_regex='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+          if [[ ! "$manifest_version" =~ $semver_regex ]]; then
+            echo "Invalid manifest version: $manifest_version" >&2
+            exit 1
+          fi
+
+          if [[ ! "$package_version" =~ $semver_regex ]]; then
+            echo "Invalid package version: $package_version" >&2
+            exit 1
+          fi
+
+          if [[ "$manifest_version" != "$package_version" ]]; then
+            echo "Version mismatch: manifest=$manifest_version package=$package_version" >&2
+            exit 1
+          fi
+
+          if [[ "$tag_version" != "$manifest_version" ]]; then
+            echo "Tag/version mismatch: tag=$tag_version manifest=$manifest_version package=$package_version" >&2
+            exit 1
+          fi
+
+      - name: Verify extension build
+        run: |
+          npm run lint:extension
+          npm run typecheck --workspace @imongspend/shared
+          npm run typecheck --workspace @imongspend/extension
+          npm run build:extension
+
+      - name: Package extension zip
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p artifacts
+          release_dir="artifacts/imongspend-extension-${RELEASE_TAG}"
+          rm -rf "$release_dir"
+          mkdir -p "$release_dir"
+          cp -R apps/extension/dist/. "$release_dir"/
+          cd artifacts
+          zip -r "imongspend-extension-${RELEASE_TAG}.zip" "imongspend-extension-${RELEASE_TAG}"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ImongSpend Extension ${{ steps.tag.outputs.tag_name }}
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          target_commitish: ${{ steps.tag.outputs.tag_name }}
+          generate_release_notes: true
+          files: artifacts/imongspend-extension-${{ steps.tag.outputs.tag_name }}.zip
