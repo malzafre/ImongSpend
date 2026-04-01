@@ -7,18 +7,37 @@ type GitHubReleaseAsset = {
   name: string
   browser_download_url: string
   content_type?: string
+  download_count?: number
 }
 
 type GitHubRelease = {
   html_url?: string
   tag_name?: string
   assets: GitHubReleaseAsset[]
+  draft?: boolean
+  prerelease?: boolean
 }
 
 type CachedGitHubRelease = {
   ts: number
   data: GitHubRelease
 }
+
+type GitHubDownloadStats = {
+  totalDownloads: number
+  releaseCount: number
+}
+
+type CachedGitHubDownloadStats = {
+  ts: number
+  data: GitHubDownloadStats
+}
+
+type GitHubReleasesResponse = Array<{
+  assets?: GitHubReleaseAsset[]
+  draft?: boolean
+  prerelease?: boolean
+}>
 
 type InstallStep = {
   title: string
@@ -34,6 +53,7 @@ type SetupGuide = {
 }
 
 const RELEASE_CACHE_TTL_MS = 1000 * 60 * 60
+const DOWNLOAD_STATS_CACHE_TTL_MS = 1000 * 60 * 60
 const CLEAR_SETUP_HASH = '#clear-setup'
 const DATA_POLICY_HASH = '#data-policy'
 
@@ -242,19 +262,92 @@ async function resolveSetupBrowser(): Promise<SetupBrowser> {
 }
 
 function pickInstallAsset(assets: GitHubReleaseAsset[]): GitHubReleaseAsset | undefined {
-  const archiveAsset = assets.find((asset) => {
-    const normalizedName = asset.name.toLowerCase()
-    const normalizedContentType = asset.content_type?.toLowerCase() ?? ''
-
-    return (
-      normalizedName.endsWith('.zip') ||
-      normalizedName.endsWith('.crx') ||
-      normalizedContentType.includes('zip') ||
-      normalizedContentType.includes('chrome')
-    )
-  })
+  const archiveAsset = assets.find((asset) => isInstallAsset(asset))
 
   return archiveAsset ?? assets[0]
+}
+
+function isInstallAsset(asset: GitHubReleaseAsset): boolean {
+  const normalizedName = asset.name.toLowerCase()
+  const normalizedContentType = asset.content_type?.toLowerCase() ?? ''
+
+  return (
+    normalizedName.endsWith('.zip') ||
+    normalizedName.endsWith('.crx') ||
+    normalizedContentType.includes('zip') ||
+    normalizedContentType.includes('chrome')
+  )
+}
+
+function resolveDownloadStats(releases: GitHubRelease[]): GitHubDownloadStats {
+  const publishedReleases = releases.filter((release) => release.draft !== true && release.prerelease !== true)
+  const totalDownloads = publishedReleases.reduce((releaseTotal, release) => {
+    const releaseDownloadCount = release.assets.reduce((assetTotal, asset) => {
+      if (!isInstallAsset(asset)) {
+        return assetTotal
+      }
+
+      const rawCount = asset.download_count
+      if (typeof rawCount !== 'number' || !Number.isFinite(rawCount)) {
+        return assetTotal
+      }
+
+      return assetTotal + Math.max(0, Math.floor(rawCount))
+    }, 0)
+
+    return releaseTotal + releaseDownloadCount
+  }, 0)
+
+  return {
+    totalDownloads,
+    releaseCount: publishedReleases.length,
+  }
+}
+
+function readDownloadStatsCache(cacheKey: string): GitHubDownloadStats | null {
+  try {
+    const raw = sessionStorage.getItem(cacheKey)
+
+    if (!raw) {
+      return null
+    }
+
+    const cached = JSON.parse(raw) as CachedGitHubDownloadStats
+
+    if (!cached.ts || !cached.data || Date.now() - cached.ts > DOWNLOAD_STATS_CACHE_TTL_MS) {
+      sessionStorage.removeItem(cacheKey)
+      return null
+    }
+
+    if (
+      typeof cached.data.totalDownloads !== 'number' ||
+      !Number.isFinite(cached.data.totalDownloads) ||
+      typeof cached.data.releaseCount !== 'number' ||
+      !Number.isFinite(cached.data.releaseCount)
+    ) {
+      sessionStorage.removeItem(cacheKey)
+      return null
+    }
+
+    return {
+      totalDownloads: Math.max(0, Math.floor(cached.data.totalDownloads)),
+      releaseCount: Math.max(0, Math.floor(cached.data.releaseCount)),
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeDownloadStatsCache(cacheKey: string, data: GitHubDownloadStats) {
+  try {
+    const payload: CachedGitHubDownloadStats = {
+      ts: Date.now(),
+      data,
+    }
+    sessionStorage.setItem(cacheKey, JSON.stringify(payload))
+  } catch {
+    // Ignore storage errors and continue without cache.
+  }
 }
 
 function resolveInstallState(release: GitHubRelease, fallbackUrl: string) {
@@ -313,10 +406,15 @@ function App() {
   const githubUrl = `https://github.com/${githubOwner}/${githubRepo}`
   const latestReleasePageUrl = `${githubUrl}/releases/latest`
   const latestReleaseApiUrl = `https://api.github.com/repos/${githubOwner}/${githubRepo}/releases/latest`
+  const releasesApiUrl = `https://api.github.com/repos/${githubOwner}/${githubRepo}/releases?per_page=100`
   const releaseCacheKey = `${githubOwner.toLowerCase()}_${githubRepo.toLowerCase()}_latest_release`
+  const downloadStatsCacheKey = `${githubOwner.toLowerCase()}_${githubRepo.toLowerCase()}_download_stats`
 
   const [installUrl, setInstallUrl] = useState(latestReleasePageUrl)
   const [installNote, setInstallNote] = useState('Resolving the latest install package...')
+  const [latestReleaseTag, setLatestReleaseTag] = useState<string | null>(null)
+  const [downloadStats, setDownloadStats] = useState<GitHubDownloadStats | null>(null)
+  const [downloadStatsFromCache, setDownloadStatsFromCache] = useState(false)
   const [route, setRoute] = useState<AppRoute>(() => resolveRouteFromHash(window.location.hash))
   const [setupBrowser, setSetupBrowser] = useState<SetupBrowser>('chrome')
 
@@ -396,6 +494,7 @@ function App() {
         const cachedState = resolveInstallState(cachedRelease, latestReleasePageUrl)
         setInstallUrl(cachedState.url)
         setInstallNote(`${cachedState.note} (cached)`)
+        setLatestReleaseTag(cachedRelease.tag_name ?? null)
       }
 
       try {
@@ -425,6 +524,7 @@ function App() {
         const resolvedState = resolveInstallState(release, latestReleasePageUrl)
         setInstallUrl(resolvedState.url)
         setInstallNote(resolvedState.note)
+        setLatestReleaseTag(release.tag_name ?? null)
       } catch {
         if (!isActive) {
           return
@@ -434,6 +534,7 @@ function App() {
         setInstallNote(
           'GitHub API is unavailable right now. Opening latest release page instead.'
         )
+        setLatestReleaseTag(null)
       }
     }
 
@@ -443,6 +544,61 @@ function App() {
       isActive = false
     }
   }, [latestReleaseApiUrl, latestReleasePageUrl, releaseCacheKey])
+
+  useEffect(() => {
+    let isActive = true
+
+    const resolveDownloadStatsValue = async () => {
+      const cachedStats = readDownloadStatsCache(downloadStatsCacheKey)
+
+      if (cachedStats && isActive) {
+        setDownloadStats(cachedStats)
+        setDownloadStatsFromCache(true)
+      }
+
+      try {
+        const response = await fetch(releasesApiUrl, {
+          headers: {
+            Accept: 'application/vnd.github+json',
+          },
+        })
+
+        if (!response.ok) {
+          throw new Error(`GitHub releases request failed: ${response.status}`)
+        }
+
+        const payload = (await response.json()) as GitHubReleasesResponse
+        const normalizedReleases: GitHubRelease[] = Array.isArray(payload)
+          ? payload.map((release) => ({
+              assets: Array.isArray(release.assets) ? release.assets : [],
+              draft: release.draft,
+              prerelease: release.prerelease,
+            }))
+          : []
+
+        if (!isActive) {
+          return
+        }
+
+        const stats = resolveDownloadStats(normalizedReleases)
+        writeDownloadStatsCache(downloadStatsCacheKey, stats)
+        setDownloadStats(stats)
+        setDownloadStatsFromCache(false)
+      } catch {
+        if (!isActive) {
+          return
+        }
+
+        setDownloadStats((current) => current)
+      }
+    }
+
+    void resolveDownloadStatsValue()
+
+    return () => {
+      isActive = false
+    }
+  }, [downloadStatsCacheKey, releasesApiUrl])
 
   const flow = [
     {
@@ -525,6 +681,31 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  const totalDownloadsLabel = downloadStats ? downloadStats.totalDownloads.toLocaleString() : '--'
+  const latestReleaseLabel = latestReleaseTag ? latestReleaseTag : 'Checking latest version...'
+  const downloadsTitle = downloadStats
+    ? `Downloaded ${downloadStats.totalDownloads.toLocaleString()} times from first release to latest${downloadStatsFromCache ? ' (cached)' : ''}`
+    : 'Download count is loading...'
+
+  const topbarActions = (
+    <div className="topbar-actions">
+      <button className="download-pill" type="button" onClick={handleInstallClick} title={downloadsTitle}>
+        <span className="download-pill-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+            <path d="M12 3a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42L11 12.59V4a1 1 0 0 1 1-1Zm-7 14a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z" />
+          </svg>
+        </span>
+        <span className="download-pill-count">{totalDownloadsLabel}</span>
+      </button>
+
+      <a className="github-icon-link" href={githubUrl} target="_blank" rel="noreferrer" aria-label="View on GitHub" title="View on GitHub">
+        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+          <path d="M12 .6A12 12 0 0 0 8.2 24c.6.1.8-.3.8-.6v-2.2c-3.4.8-4.1-1.4-4.1-1.4-.6-1.5-1.4-1.9-1.4-1.9-1.2-.8.1-.8.1-.8 1.3.1 2 .9 2 .9 1.1 2 3 1.4 3.7 1.1.1-.8.4-1.4.8-1.7-2.7-.3-5.5-1.4-5.5-6.2 0-1.4.5-2.5 1.2-3.4-.1-.3-.5-1.6.1-3.3 0 0 1-.3 3.4 1.3a11.4 11.4 0 0 1 6.1 0c2.3-1.6 3.4-1.3 3.4-1.3.6 1.7.2 3 .1 3.3.8.9 1.2 2 1.2 3.4 0 4.8-2.9 5.9-5.6 6.2.4.4.9 1.1.9 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .6Z" />
+        </svg>
+      </a>
+    </div>
+  )
+
   if (route === 'data-policy') {
     return (
       <main className="landing" id="home">
@@ -533,9 +714,7 @@ function App() {
             <img src={brandLogo} alt="ImongSpend logo" />
             <span>ImongSpend</span>
           </a>
-          <a className="top-link" href={githubUrl} target="_blank" rel="noreferrer">
-            View on GitHub
-          </a>
+          {topbarActions}
         </header>
 
         <section className="policy-page" aria-label="Data policy">
@@ -628,9 +807,7 @@ function App() {
             <img src={brandLogo} alt="ImongSpend logo" />
             <span>ImongSpend</span>
           </a>
-          <a className="top-link" href={githubUrl} target="_blank" rel="noreferrer">
-            View on GitHub
-          </a>
+          {topbarActions}
         </header>
 
         <section className="setup-page" aria-label="Clear setup page">
@@ -709,9 +886,7 @@ function App() {
           <img src={brandLogo} alt="ImongSpend logo" />
           <span>ImongSpend</span>
         </a>
-        <a className="top-link" href={githubUrl} target="_blank" rel="noreferrer">
-          View on GitHub
-        </a>
+        {topbarActions}
       </header>
 
       <section className="hero">
@@ -723,9 +898,12 @@ function App() {
             extension, and get a clean purchase total you can actually use for planning.
           </p>
           <div className="hero-actions">
-            <button className="btn btn-primary" type="button" onClick={handleInstallClick}>
-              Install latest release
-            </button>
+            <div className="hero-install-block">
+              <button className="btn btn-primary" type="button" onClick={handleInstallClick}>
+                Install latest release
+              </button>
+              <p className="hero-install-version">Latest version: {latestReleaseLabel}</p>
+            </div>
             <a className="btn btn-secondary" href="#how-it-works">
               How it works
             </a>
