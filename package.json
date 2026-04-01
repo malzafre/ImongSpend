@@ -18,7 +18,8 @@
     "lint:landing": "npm run lint --workspace @imongspend/landing",
     "lint:extension": "npm run lint --workspace @imongspend/extension",
     "typecheck": "npm run typecheck --workspace @imongspend/landing && npm run typecheck --workspace @imongspend/extension && npm run typecheck --workspace @imongspend/shared",
-    "preview": "npm run preview --workspace @imongspend/landing"
+    "preview": "npm run preview --workspace @imongspend/landing",
+    "version:extension": "node -e \"const fs=require('node:fs'); const next=process.argv[1]; if(!next||!/^[0-9]+\\.[0-9]+\\.[0-9]+$/.test(next)){console.error('Usage: npm run version:extension -- <major.minor.patch>'); process.exit(1);} const files=['apps/extension/public/manifest.json','apps/extension/package.json']; for(const file of files){const json=JSON.parse(fs.readFileSync(file,'utf8')); json.version=next; fs.writeFileSync(file, JSON.stringify(json, null, 2)+'\\n');} console.log('Updated extension version to', next);\""
   },
   "dependencies": {
     "react": "^19.2.4",
