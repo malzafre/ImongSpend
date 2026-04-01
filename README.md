@@ -144,18 +144,20 @@ Always validate this behavior against current code before publishing legal/priva
 
 GitHub Actions workflow: `.github/workflows/extension-cicd.yml`
 
-- On PR/push to `main`: lint, typecheck, and build extension
-- On tag push matching `v*`: build extension and publish release zip asset
-
-Create and push a tag:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+- On PR to `main`: lint, typecheck, and build extension (checks only)
+- On push to `main`: lint/typecheck/build, then auto-publish extension release
+- Auto release tag format: `v<major>.<minor>.<patch>` and computed from the higher of:
+  - patch bump of latest merged `v*` tag on `main`/`HEAD`
+  - current extension version in `apps/extension/public/manifest.json` / `apps/extension/package.json`
+- Extension `version` is synced to the new tag in both `apps/extension/public/manifest.json` and `apps/extension/package.json` before packaging
+- If `HEAD` already has a `v*` tag, auto-release is skipped to avoid duplicates
+- Workflow fails if manifest/package versions are invalid or mismatched
+- Release notes are generated from commit messages since the previous tag
+- Release job uses a `main`-scoped concurrency group to serialize version/tag creation and avoid race conditions on rapid consecutive merges
 
 Release artifact format:
 - `imongspend-extension-vX.Y.Z.zip`
+- Zip root contains a single folder: `imongspend-extension-vX.Y.Z/` (to avoid scattered files on "Extract Here")
 
 ## Useful paths
 

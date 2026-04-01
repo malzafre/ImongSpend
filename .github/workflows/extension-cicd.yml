@@ -7,8 +7,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -17,7 +15,6 @@ permissions:
 jobs:
   extension-checks:
     name: Extension Checks
-    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -45,14 +42,20 @@ jobs:
         run: npm run build:extension
 
   extension-release:
-    name: Extension Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: Extension Auto Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: extension-checks
     runs-on: ubuntu-latest
+    concurrency:
+      group: extension-auto-release-${{ github.ref_name }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -70,14 +73,186 @@ jobs:
           npm run typecheck --workspace @imongspend/extension
           npm run build:extension
 
+      - name: Resolve next release tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force origin
+
+          latest_tag="$(git tag --merged HEAD --list 'v*' --sort=-version:refname | head -n 1)"
+          head_tag="$(git tag --points-at HEAD --list 'v*' --sort=-version:refname | head -n 1)"
+          manifest_version="$(node -p \"JSON.parse(require('node:fs').readFileSync('apps/extension/public/manifest.json','utf8')).version\")"
+          package_version="$(node -p \"JSON.parse(require('node:fs').readFileSync('apps/extension/package.json','utf8')).version\")"
+
+          semver_regex='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+          semver_key() {
+            local version="$1"
+            local major minor patch
+            IFS='.' read -r major minor patch <<< "$version"
+            printf '%06d%06d%06d\n' "$major" "$minor" "$patch"
+          }
+
+          increment_patch() {
+            local version="$1"
+            local major minor patch
+            IFS='.' read -r major minor patch <<< "$version"
+            echo "${major}.${minor}.$((patch + 1))"
+          }
+
+          if [[ ! "$manifest_version" =~ $semver_regex ]]; then
+            echo "Invalid manifest version: $manifest_version" >&2
+            exit 1
+          fi
+
+          if [[ ! "$package_version" =~ $semver_regex ]]; then
+            echo "Invalid package version: $package_version" >&2
+            exit 1
+          fi
+
+          if [[ "$manifest_version" != "$package_version" ]]; then
+            echo "Version mismatch: manifest=$manifest_version package=$package_version" >&2
+            exit 1
+          fi
+
+          if [[ -n "$head_tag" ]]; then
+            echo "release_needed=false" >> "$GITHUB_OUTPUT"
+            echo "tag_name=$head_tag" >> "$GITHUB_OUTPUT"
+            echo "last_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          latest_version='0.0.0'
+
+          if [[ -n "$latest_tag" ]]; then
+            latest_version="${latest_tag#v}"
+
+            if [[ ! "$latest_version" =~ $semver_regex ]]; then
+              echo "Unexpected tag format: $latest_tag" >&2
+              exit 1
+            fi
+          fi
+
+          next_version="$(increment_patch "$latest_version")"
+
+          if [[ "$(semver_key "$manifest_version")" > "$(semver_key "$next_version")" ]]; then
+            next_version="$manifest_version"
+          fi
+
+          next_tag="v${next_version}"
+
+          if git rev-parse "$next_tag" >/dev/null 2>&1; then
+            echo "Tag already exists: $next_tag" >&2
+            echo "Bump extension version in apps/extension/public/manifest.json and apps/extension/package.json, then merge again." >&2
+            exit 1
+          fi
+
+          echo "release_needed=true" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$next_tag" >> "$GITHUB_OUTPUT"
+          echo "last_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        if: steps.version.outputs.release_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo_url="https://github.com/${GITHUB_REPOSITORY}"
+          tag_name="${{ steps.version.outputs.tag_name }}"
+          last_tag="${{ steps.version.outputs.last_tag }}"
+
+          if [[ -n "$last_tag" ]]; then
+            log_range="${last_tag}..HEAD"
+          else
+            log_range="HEAD"
+          fi
+
+          commit_lines="$(git log "$log_range" --pretty=format:'- %s ([`%h`](https://github.com/${GITHUB_REPOSITORY}/commit/%H))' --reverse --no-merges)"
+
+          if [[ -z "$commit_lines" ]]; then
+            commit_lines='- Maintenance updates.'
+          fi
+
+          {
+            echo '## Highlights'
+
+            if [[ -n "$last_tag" ]]; then
+              echo "Automated extension release for commits merged to \`main\` since \`${last_tag}\`."
+            else
+              echo 'Initial automated extension release from `main`.'
+            fi
+
+            echo
+            echo "## What's Changed"
+            echo "$commit_lines"
+            echo
+
+            if [[ -n "$last_tag" ]]; then
+              echo "**Full Diff**: ${repo_url}/compare/${last_tag}...${tag_name}"
+            fi
+          } > release-notes.md
+
+      - name: Sync extension version to release tag
+        if: steps.version.outputs.release_needed == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          node - <<'NODE'
+          const fs = require('node:fs')
+
+          const releaseTag = process.env.RELEASE_TAG
+          if (!releaseTag) {
+            throw new Error('Missing RELEASE_TAG')
+          }
+
+          const version = releaseTag.replace(/^v/, '')
+          const files = [
+            'apps/extension/public/manifest.json',
+            'apps/extension/package.json',
+          ]
+
+          for (const file of files) {
+            const raw = fs.readFileSync(file, 'utf8')
+            const json = JSON.parse(raw)
+            json.version = version
+            fs.writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`)
+          }
+
+          console.log(`Synchronized extension version to ${version}`)
+          NODE
+
+      - name: Build extension with release version
+        if: steps.version.outputs.release_needed == 'true'
+        run: npm run build:extension
+
       - name: Package extension zip
+        if: steps.version.outputs.release_needed == 'true'
         run: |
           mkdir -p artifacts
-          cd apps/extension/dist
-          zip -r "../../../artifacts/imongspend-extension-${{ github.ref_name }}.zip" .
+          release_dir="artifacts/imongspend-extension-${{ steps.version.outputs.tag_name }}"
+          rm -rf "$release_dir"
+          mkdir -p "$release_dir"
+          cp -R apps/extension/dist/. "$release_dir"/
+          cd artifacts
+          zip -r "imongspend-extension-${{ steps.version.outputs.tag_name }}.zip" "imongspend-extension-${{ steps.version.outputs.tag_name }}"
 
       - name: Publish GitHub release
+        if: steps.version.outputs.release_needed == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
-          files: artifacts/imongspend-extension-${{ github.ref_name }}.zip
+          name: ImongSpend Extension ${{ steps.version.outputs.tag_name }}
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          target_commitish: ${{ github.sha }}
+          body_path: release-notes.md
+          generate_release_notes: false
+          files: artifacts/imongspend-extension-${{ steps.version.outputs.tag_name }}.zip
+
+      - name: Skip release (tag already exists on HEAD)
+        if: steps.version.outputs.release_needed != 'true'
+        run: |
+          echo "Release skipped. Existing tag on HEAD: ${{ steps.version.outputs.tag_name }}"
