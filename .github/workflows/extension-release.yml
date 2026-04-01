@@ -140,6 +140,5 @@ jobs:
         with:
           name: ImongSpend Extension ${{ steps.tag.outputs.tag_name }}
           tag_name: ${{ steps.tag.outputs.tag_name }}
-          target_commitish: ${{ steps.tag.outputs.tag_commit_sha }}
           generate_release_notes: true
           files: artifacts/imongspend-extension-${{ steps.tag.outputs.tag_name }}.zip
