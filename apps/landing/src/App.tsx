@@ -333,6 +333,40 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (route === 'clear-setup' || route === 'data-policy') {
+      window.scrollTo({ top: 0, behavior: 'auto' })
+    }
+  }, [route])
+
+  useEffect(() => {
+    if (route !== 'landing') {
+      return
+    }
+
+    const activeHash = window.location.hash
+
+    if (
+      !activeHash ||
+      activeHash === '#home' ||
+      activeHash === CLEAR_SETUP_HASH ||
+      activeHash === DATA_POLICY_HASH
+    ) {
+      return
+    }
+
+    const targetId = decodeURIComponent(activeHash.slice(1))
+    const targetElement = document.getElementById(targetId)
+
+    if (!targetElement) {
+      return
+    }
+
+    requestAnimationFrame(() => {
+      targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }, [route])
+
+  useEffect(() => {
     let isActive = true
 
     const detectSetupBrowser = async () => {
@@ -452,12 +486,12 @@ function App() {
     {
       question: 'How is my order data handled?',
       answer:
-        'ImongSpend processes order data in your browser session to compute totals. It is designed to keep processing local while you are signed in to your marketplace account.',
+        'ImongSpend reads order data from your active marketplace session only to compute totals in-browser. It keeps processing local while you are signed in.',
     },
     {
       question: 'Do you upload my order history to ImongSpend servers?',
       answer:
-        'No dedicated ImongSpend backend receives your full order history. The extension requests marketplace data from your browser session and stores summaries locally on your device.',
+        'No. ImongSpend does not upload your full order history to an ImongSpend database. The extension requests marketplace data from your browser session and stores only summaries locally on your device.',
     },
     {
       question: 'Where can I read your data policy?',
@@ -493,7 +527,7 @@ function App() {
 
   if (route === 'data-policy') {
     return (
-      <main className="landing">
+      <main className="landing" id="home">
         <header className="topbar">
           <a className="brand" href="#home" aria-label="ImongSpend home">
             <img src={brandLogo} alt="ImongSpend logo" />
@@ -518,10 +552,10 @@ function App() {
 
           <div className="policy-grid">
             <article className="policy-card">
-              <h3>What we read</h3>
+              <h3>What we access in-session</h3>
               <p>
-                While you are signed in, the extension reads order information already
-                available in supported marketplace pages to calculate your totals.
+                While you are signed in, the extension accesses order information from
+                supported marketplace pages to calculate your totals.
               </p>
             </article>
 
@@ -529,8 +563,8 @@ function App() {
               <h3>How processing works</h3>
               <p>
                 Calculations run in your browser session. ImongSpend does not require an
-                account and does not rely on a dedicated backend to process full order
-                history.
+                account and does not rely on a dedicated backend to process your full
+                order history.
               </p>
             </article>
 
@@ -538,7 +572,8 @@ function App() {
               <h3>What is stored</h3>
               <p>
                 Saved summaries and setup preferences are stored locally on your device so
-                you can reopen recent results faster.
+                you can reopen recent results faster. No cloud database is used for your
+                full order history.
               </p>
             </article>
 
@@ -587,7 +622,7 @@ function App() {
 
   if (route === 'clear-setup') {
     return (
-      <main className="landing">
+      <main className="landing" id="home">
         <header className="topbar">
           <a className="brand" href="#home" aria-label="ImongSpend home">
             <img src={brandLogo} alt="ImongSpend logo" />
@@ -668,7 +703,7 @@ function App() {
   }
 
   return (
-    <main className="landing">
+    <main className="landing" id="home">
       <header className="topbar">
         <a className="brand" href="/" aria-label="ImongSpend home">
           <img src={brandLogo} alt="ImongSpend logo" />
