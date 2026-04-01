@@ -87,9 +87,8 @@ export function mapOrderToRow(order: OrderLike, source: OrderSource = 'unknown')
         shopVoucherDiscount,
         orderTotal,
         explicitDiscountSubtotal: rowFromDetail.discountSubtotal,
-        fallback: Math.max(rowFromDetail.totalSaved, rowFromList.totalSaved),
       })
-    : inferTotalSavedFromList(order, source, rowFromList.totalSaved, {
+    : inferTotalSavedFromList(order, source, {
         merchandiseSubtotal,
         shippingFee,
         shippingDiscountSubtotal,
@@ -199,7 +198,6 @@ function parseListFinancial(order: Record<string, unknown>, source: OrderSource)
 function inferTotalSavedFromList(
   order: Record<string, unknown>,
   source: OrderSource,
-  fallback: number,
   knownAmounts: KnownOrderAmounts,
 ): number {
   const listSaved =
@@ -207,17 +205,13 @@ function inferTotalSavedFromList(
     toNumber(getByPath(order, 'price_info.total_saved')) ??
     toNumber(getByPath(order, 'price_info.saving_total'))
 
-  const computed = resolveTotalSaved({
-    ...knownAmounts,
-    fallback,
-  })
-  const fallbackSavings = round2(Math.max(0, fallback))
+  const computed = resolveTotalSaved(knownAmounts)
 
   if (listSaved !== null) {
-    return Math.max(0, toShopeeMoney(listSaved, source), computed, fallbackSavings)
+    return Math.max(0, toShopeeMoney(listSaved, source), computed)
   }
 
-  return Math.max(computed, fallbackSavings)
+  return computed
 }
 
 function inferShippingFeeFromList(order: Record<string, unknown>, source: OrderSource): number {
@@ -383,11 +377,8 @@ function isShopVoucherLabel(label: string): boolean {
 function resolveTotalSaved(
   params: KnownOrderAmounts & {
     explicitDiscountSubtotal?: number
-    fallback: number
   },
 ): number {
-  void params.fallback
-
   const baselineTotal = round2(params.merchandiseSubtotal + params.shippingFee)
   const canInferFromTotal = baselineTotal > 0 && params.orderTotal >= 0 && baselineTotal >= params.orderTotal
   const inferredDiscountSubtotal = canInferFromTotal ? round2(baselineTotal - params.orderTotal) : 0
