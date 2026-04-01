@@ -717,10 +717,10 @@ function App() {
       <section className="hero">
         <div>
           <p className="eyebrow">Chrome Extension</p>
-          <h1>Know your Shopee spending in minutes, not in spreadsheet marathons.</h1>
+          <h1>Order history calculator for Shopee and Lazada in minutes.</h1>
           <p className="hero-copy">
-            ImongSpend keeps spending reviews simple. Open Shopee, run the extension,
-            and get a clean total you can actually use for planning.
+            ImongSpend keeps spending reviews simple. Open your orders page, run the
+            extension, and get a clean purchase total you can actually use for planning.
           </p>
           <div className="hero-actions">
             <button className="btn btn-primary" type="button" onClick={handleInstallClick}>
@@ -744,7 +744,7 @@ function App() {
       <section className="how" id="how-it-works" aria-label="How ImongSpend works">
         <div className="section-head">
           <p className="eyebrow">How it works</p>
-          <h2>From install to spend summary in three quick steps</h2>
+          <h2>From install to purchase summary in three quick steps</h2>
         </div>
         <ol className="step-grid">
           {flow.map((step, index) => (

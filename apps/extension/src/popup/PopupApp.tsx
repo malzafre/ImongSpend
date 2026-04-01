@@ -39,7 +39,7 @@ const POLICY_ACKNOWLEDGED_KEY = 'imongspend.popup.policy.acknowledged.v1'
 const LEGACY_ONBOARDING_KEY = 'imongspend.popup.onboarding.accepted.v1'
 const SAVED_SUMMARY_KEY = 'imongspend.popup.saved-summary.v1'
 const PROVIDER_SELECTION_KEY = 'imongspend.popup.provider.v1'
-const FAQ_URL = 'https://imongspend.com/faq'
+const FAQ_URL = 'https://imongspend.hanscandor.tech/#faq'
 
 const PROVIDER_LABEL: Record<PopupProvider, string> = {
   shopee: 'Shopee',
