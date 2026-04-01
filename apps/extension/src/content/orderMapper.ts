@@ -87,9 +87,8 @@ export function mapOrderToRow(order: OrderLike, source: OrderSource = 'unknown')
         shopVoucherDiscount,
         orderTotal,
         explicitDiscountSubtotal: rowFromDetail.discountSubtotal,
-        fallback: Math.max(rowFromDetail.totalSaved, rowFromList.totalSaved),
       })
-    : inferTotalSavedFromList(order, source, rowFromList.totalSaved, {
+    : inferTotalSavedFromList(order, source, {
         merchandiseSubtotal,
         shippingFee,
         shippingDiscountSubtotal,
@@ -199,7 +198,6 @@ function parseListFinancial(order: Record<string, unknown>, source: OrderSource)
 function inferTotalSavedFromList(
   order: Record<string, unknown>,
   source: OrderSource,
-  fallback: number,
   knownAmounts: KnownOrderAmounts,
 ): number {
   const listSaved =
@@ -207,10 +205,7 @@ function inferTotalSavedFromList(
     toNumber(getByPath(order, 'price_info.total_saved')) ??
     toNumber(getByPath(order, 'price_info.saving_total'))
 
-  const computed = resolveTotalSaved({
-    ...knownAmounts,
-    fallback,
-  })
+  const computed = resolveTotalSaved(knownAmounts)
 
   if (listSaved !== null) {
     return Math.max(0, toShopeeMoney(listSaved, source), computed)
@@ -382,27 +377,17 @@ function isShopVoucherLabel(label: string): boolean {
 function resolveTotalSaved(
   params: KnownOrderAmounts & {
     explicitDiscountSubtotal?: number
-    fallback: number
   },
 ): number {
   const baselineTotal = round2(params.merchandiseSubtotal + params.shippingFee)
-  const canInferFromTotal = baselineTotal > 0 && params.orderTotal > 0 && baselineTotal >= params.orderTotal
-  const inferredDiscountSubtotal = Math.max(
-    0,
-    canInferFromTotal ? round2(baselineTotal - params.orderTotal) : 0,
-  )
+  const canInferFromTotal = baselineTotal > 0 && params.orderTotal >= 0 && baselineTotal >= params.orderTotal
+  const inferredDiscountSubtotal = canInferFromTotal ? round2(baselineTotal - params.orderTotal) : 0
   const knownDiscountSubtotal = round2(
     Math.max(0, params.shippingDiscountSubtotal) + Math.max(0, params.shopVoucherDiscount),
   )
   const explicitDiscountSubtotal = round2(Math.max(0, params.explicitDiscountSubtotal ?? 0))
-  const structuredCheckoutSavings = Math.max(knownDiscountSubtotal, explicitDiscountSubtotal)
 
-  if (structuredCheckoutSavings > 0) {
-    const checkoutSavings = Math.max(structuredCheckoutSavings, inferredDiscountSubtotal)
-    return round2(checkoutSavings + Math.max(0, params.fallback))
-  }
-
-  return round2(Math.max(inferredDiscountSubtotal, Math.max(0, params.fallback)))
+  return round2(Math.max(knownDiscountSubtotal, explicitDiscountSubtotal, inferredDiscountSubtotal))
 }
 
 function extractItems(sourceObject: Record<string, unknown>): Record<string, unknown>[] {
@@ -471,11 +456,11 @@ export function extractNextOffset(body: Record<string, unknown>): number | null 
 }
 
 export function isCompletedStatus(status: string): boolean {
-  return /(label_completed|completed|complete|received|delivered)/i.test(status)
+  return /(label_completed|completed|complete|received|delivered|success|succeeded|\bpaid\b)/i.test(status)
 }
 
 export function isCancelledStatus(status: string): boolean {
-  return /(label_cancelled|label_canceled|cancelled|canceled|cancel)/i.test(status)
+  return /(label_cancelled|label_canceled|cancelled|canceled|cancel|refund|refunded|returned|return)/i.test(status)
 }
 
 function resolveOrderedAt(order: OrderLike, detail: Record<string, unknown> | null): string {

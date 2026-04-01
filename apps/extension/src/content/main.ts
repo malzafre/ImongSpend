@@ -1,9 +1,10 @@
 import type { ResearchCalculationResult, ResearchOrderRow } from '@shared/index'
 import { buildResearchResult } from './calculate'
 import {
-  collectOrderDetailsViaPageBridge,
-  collectRowsViaContentApi,
-  collectRowsViaPageBridge,
+  collectOrderDetailsForProvider,
+  collectRowsFallbackForProvider,
+  collectRowsForProvider,
+  type ResearchProvider,
   withStageTimeout,
 } from './pipeline'
 
@@ -12,12 +13,14 @@ type RequestMessage =
       type: 'IMONGSPEND_RESEARCH_CALCULATE'
       payload?: {
         maxPages?: number
+        provider?: ResearchProvider
       }
     }
   | {
       type: 'IMONGSPEND_FETCH_ORDER_DETAILS'
       payload?: {
         orderIds?: string[]
+        provider?: ResearchProvider
       }
     }
 
@@ -50,8 +53,9 @@ runtime?.onMessage?.addListener((message, _sender, sendResponse) => {
 
   if (typed.type === 'IMONGSPEND_FETCH_ORDER_DETAILS') {
     const orderIds = Array.isArray(typed.payload?.orderIds) ? typed.payload.orderIds : []
+    const provider = normalizeProvider(typed.payload?.provider)
 
-    void collectOrderDetailsViaPageBridge(orderIds)
+    void collectOrderDetailsForProvider(provider, orderIds)
       .then((rows) => sendResponse({ ok: true, rows }))
       .catch((error: unknown) => {
         const messageText = error instanceof Error ? error.message : 'Unexpected error'
@@ -65,7 +69,7 @@ runtime?.onMessage?.addListener((message, _sender, sendResponse) => {
     return
   }
 
-  void runResearchCalculation(typed.payload?.maxPages)
+  void runResearchCalculation(typed.payload?.maxPages, normalizeProvider(typed.payload?.provider))
     .then((result) => sendResponse({ ok: true, result }))
     .catch((error: unknown) => {
       const messageText = error instanceof Error ? error.message : 'Unexpected error'
@@ -75,36 +79,43 @@ runtime?.onMessage?.addListener((message, _sender, sendResponse) => {
   return true
 })
 
-async function runResearchCalculation(maxPagesInput?: number): Promise<ResearchCalculationResult> {
+async function runResearchCalculation(
+  maxPagesInput?: number,
+  provider: ResearchProvider = 'shopee',
+): Promise<ResearchCalculationResult> {
   const maxPages = clampMaxPages(maxPagesInput)
   const notes: string[] = []
+  const stageTimeoutMs = provider === 'lazada' ? Math.max(90_000, maxPages * 2_400) : 12_000
+  let collectedRows: ResearchOrderRow[] = []
 
   try {
     const bridgeResult = await withStageTimeout(
-      collectRowsViaPageBridge(maxPages),
-      12_000,
+      collectRowsForProvider(provider, maxPages),
+      stageTimeoutMs,
       'Page-context collection timed out.',
     )
 
     if (bridgeResult.notes.length > 0) {
       notes.push(...bridgeResult.notes)
     }
-    return buildResearchResult(bridgeResult.rows, notes)
+    collectedRows = bridgeResult.rows
   } catch (error) {
     void error
+    
+    const fallbackTimeoutMs = provider === 'lazada' ? stageTimeoutMs : 8_000
+    const apiResult = await withStageTimeout(
+      collectRowsFallbackForProvider(provider, maxPages),
+      fallbackTimeoutMs,
+      'Content API collection timed out.',
+    )
+
+    if (apiResult.notes.length > 0) {
+      notes.push(...apiResult.notes)
+    }
+    collectedRows = apiResult.rows
   }
 
-  const apiResult = await withStageTimeout(
-    collectRowsViaContentApi(maxPages),
-    8_000,
-    'Content API collection timed out.',
-  )
-
-  if (apiResult.notes.length > 0) {
-    notes.push(...apiResult.notes)
-  }
-
-  return buildResearchResult(apiResult.rows, notes)
+  return buildResearchResult(collectedRows, notes)
 }
 
 function clampMaxPages(input: number | undefined): number {
@@ -115,4 +126,8 @@ function clampMaxPages(input: number | undefined): number {
   return Math.max(1, Math.min(120, Math.floor(input)))
 }
 
-console.info('[ImongSpend] Content script ready (lean calculator mode).')
+function normalizeProvider(value: unknown): ResearchProvider {
+  return value === 'lazada' ? 'lazada' : 'shopee'
+}
+
+console.info('[ImongSpend] Content script ready (Shopee + Lazada calculator mode).')

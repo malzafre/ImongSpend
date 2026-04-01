@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ImongSpend",
   "version": "0.1.0",
-  "description": "Shopee-first spending estimator for Chrome.",
+  "description": "Shopee and Lazada spending estimator for Chrome.",
   "minimum_chrome_version": "120",
   "icons": {
     "16": "extension-logo.png",
@@ -20,7 +20,14 @@
     "https://*.shopee.co.id/*",
     "https://*.shopee.tw/*",
     "https://*.shopee.co.th/*",
-    "https://*.shopee.com.br/*"
+    "https://*.shopee.com.br/*",
+    "https://*.lazada.com/*",
+    "https://*.lazada.com.ph/*",
+    "https://*.lazada.co.id/*",
+    "https://*.lazada.com.my/*",
+    "https://*.lazada.sg/*",
+    "https://*.lazada.vn/*",
+    "https://*.lazada.co.th/*"
   ],
   "action": {
     "default_title": "ImongSpend",
@@ -46,7 +53,14 @@
         "https://*.shopee.co.id/*",
         "https://*.shopee.tw/*",
         "https://*.shopee.co.th/*",
-        "https://*.shopee.com.br/*"
+        "https://*.shopee.com.br/*",
+        "https://*.lazada.com/*",
+        "https://*.lazada.com.ph/*",
+        "https://*.lazada.co.id/*",
+        "https://*.lazada.com.my/*",
+        "https://*.lazada.sg/*",
+        "https://*.lazada.vn/*",
+        "https://*.lazada.co.th/*"
       ],
       "js": ["assets/content.js"],
       "run_at": "document_idle"
@@ -64,7 +78,14 @@
         "https://*.shopee.co.id/*",
         "https://*.shopee.tw/*",
         "https://*.shopee.co.th/*",
-        "https://*.shopee.com.br/*"
+        "https://*.shopee.com.br/*",
+        "https://*.lazada.com/*",
+        "https://*.lazada.com.ph/*",
+        "https://*.lazada.co.id/*",
+        "https://*.lazada.com.my/*",
+        "https://*.lazada.sg/*",
+        "https://*.lazada.vn/*",
+        "https://*.lazada.co.th/*"
       ]
     }
   ]

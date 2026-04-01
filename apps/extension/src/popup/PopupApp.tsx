@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ResearchCalculationResult, ResearchOrderRow } from '@shared/index'
 
 type Stage = 'idle' | 'running' | 'done' | 'error'
+type PopupProvider = 'shopee' | 'lazada'
 
 type CalculationResponse =
   | { ok: true; result: ResearchCalculationResult }
@@ -13,23 +14,37 @@ type DetailResponse =
 
 type SavedSummary = {
   positiveSpend: number
+  totalSaved: number
   orderCount: number
   completedCount: number
-  estimatedGrandTotal: number
+  cancelledCount: number
   updatedAt: string
 }
 
-const STEPS = [
-  'Open Shopee My Purchase in this browser.',
-  'Click Calculate My Spending to fetch and compute totals locally.',
-  'Review totals and export CSV if needed.',
-]
+const STEPS_BY_PROVIDER: Record<PopupProvider, string[]> = {
+  shopee: [
+    'Open Shopee My Purchase in this browser.',
+    'Click Calculate My Spending to fetch and compute totals locally.',
+    'Review totals and export CSV if needed.',
+  ],
+  lazada: [
+    'Open Lazada My Orders in this browser.',
+    'Click Calculate My Spending to fetch and compute totals locally.',
+    'Review totals and export CSV if needed.',
+  ],
+}
 
 const POLICY_DECISION_KEY = 'imongspend.popup.policy.decision.v1'
 const POLICY_ACKNOWLEDGED_KEY = 'imongspend.popup.policy.acknowledged.v1'
 const LEGACY_ONBOARDING_KEY = 'imongspend.popup.onboarding.accepted.v1'
 const SAVED_SUMMARY_KEY = 'imongspend.popup.saved-summary.v1'
-const FAQ_URL = 'https://imongspend.com/faq'
+const PROVIDER_SELECTION_KEY = 'imongspend.popup.provider.v1'
+const FAQ_URL = 'https://imongspend.hanscandor.tech/#faq'
+
+const PROVIDER_LABEL: Record<PopupProvider, string> = {
+  shopee: 'Shopee',
+  lazada: 'Lazada',
+}
 
 type PolicyDecision = 'pending' | 'accepted'
 
@@ -41,6 +56,7 @@ const statusLabel: Record<Stage, string> = {
 }
 
 export function PopupApp() {
+  const [provider, setProvider] = useState<PopupProvider>(() => readProviderFromStorage())
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [policyReady, setPolicyReady] = useState(false)
   const [policyDecision, setPolicyDecision] = useState<PolicyDecision>('pending')
@@ -50,9 +66,6 @@ export function PopupApp() {
   const [result, setResult] = useState<ResearchCalculationResult | null>(null)
 
   useEffect(() => {
-    const initialSummary = readSavedSummaryFromStorage()
-    setSavedSummary(initialSummary)
-
     const storedDecision = window.localStorage.getItem(POLICY_DECISION_KEY)
     const hasAcknowledgedPolicy =
       window.localStorage.getItem(POLICY_ACKNOWLEDGED_KEY) === 'true' ||
@@ -78,6 +91,20 @@ export function PopupApp() {
     setPolicyDecision('pending')
     setPolicyReady(true)
   }, [])
+
+  useEffect(() => {
+    setResult(null)
+    setError(null)
+    setStage('idle')
+  }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem(PROVIDER_SELECTION_KEY, provider)
+    setSavedSummary(readSavedSummaryFromStorage(provider))
+    setResult(null)
+    setError(null)
+    setStage('idle')
+  }, [provider])
 
   const currency = useMemo(
     () =>
@@ -110,11 +137,12 @@ export function PopupApp() {
     setStage('running')
 
     try {
-      const tabId = await getActiveTabId()
+      const tabId = await getActiveTabId(provider)
+      const calculateTimeoutMs = provider === 'lazada' ? 4 * 60_000 : 30_000
       const response = await withTimeout(
-        sendResearchCalculation(tabId),
-        30_000,
-        'Calculation timed out. Keep Shopee My Purchase open, scroll once, then retry.',
+        sendResearchCalculation(tabId, provider),
+        calculateTimeoutMs,
+        `Calculation timed out. Keep ${PROVIDER_LABEL[provider]} orders page open, scroll once, then retry.`,
       )
 
       if (!response.ok) {
@@ -122,17 +150,13 @@ export function PopupApp() {
       }
 
       const summary = resultToSavedSummary(response.result)
-      persistSavedSummary(summary)
+      persistSavedSummary(summary, provider)
       setSavedSummary(summary)
       setResult(response.result)
       setStage('done')
     } catch (unknownError) {
       const raw = unknownError instanceof Error ? unknownError.message : 'Unable to calculate now.'
-      const normalized = /(403|forbidden|blocked|failed to fetch)/i.test(raw)
-        ? 'Shopee blocked this request. Keep My Purchase open, scroll once, disable blockers for Shopee, then retry.'
-        : isConnectionError(raw)
-          ? 'ImongSpend cannot reach this Shopee tab. Refresh Shopee, then retry. If it persists, reload extension in edge://extensions.'
-          : raw
+      const normalized = normalizeProviderError(provider, raw, 'calculate')
 
       setResult(null)
       setStage('error')
@@ -149,20 +173,26 @@ export function PopupApp() {
     setStage('running')
 
     try {
-      const orderIds = getUniqueKnownOrderIds(result.rows)
-
-      if (orderIds.length === 0) {
-        triggerCsvDownload(resultToCsv(result))
+      if (provider === 'lazada') {
+        triggerCsvDownload(resultToCsv(result), provider)
         setStage('done')
         return
       }
 
-      const tabId = await getActiveTabId()
+      const orderIds = getUniqueKnownOrderIds(result.rows)
+
+      if (orderIds.length === 0) {
+        triggerCsvDownload(resultToCsv(result), provider)
+        setStage('done')
+        return
+      }
+
+      const tabId = await getActiveTabId(provider)
       const detailFetchTimeoutMs = estimateDetailFetchTimeoutMs(orderIds.length)
       const response = await withTimeout(
-        sendOrderDetailsFetch(tabId, orderIds),
+        sendOrderDetailsFetch(tabId, provider, orderIds),
         detailFetchTimeoutMs,
-        'Fetching order details timed out. Keep Shopee My Purchase open and retry.',
+        `Fetching order details timed out. Keep ${PROVIDER_LABEL[provider]} orders page open and retry.`,
       )
 
       if (!response.ok) {
@@ -170,25 +200,21 @@ export function PopupApp() {
       }
 
       const mergedRows = mergeRowsWithDetails(result.rows, response.rows)
-      const mergedResult: ResearchCalculationResult = {
+      const mergedResult = recomputeResultMetrics({
         ...result,
         rows: mergedRows,
-      }
+      })
 
-      triggerCsvDownload(resultToCsv(mergedResult))
+      triggerCsvDownload(resultToCsv(mergedResult), provider)
 
       const summary = resultToSavedSummary(mergedResult)
-      persistSavedSummary(summary)
+      persistSavedSummary(summary, provider)
       setSavedSummary(summary)
       setResult(mergedResult)
       setStage('done')
     } catch (unknownError) {
       const raw = unknownError instanceof Error ? unknownError.message : 'Unable to fetch order details now.'
-      const normalized = /(403|forbidden|blocked|failed to fetch)/i.test(raw)
-        ? 'Shopee blocked detail fetch. Keep My Purchase open, scroll once, disable blockers for Shopee, then retry.'
-        : isConnectionError(raw)
-          ? 'ImongSpend cannot reach this Shopee tab. Refresh Shopee, then retry. If it persists, reload extension in edge://extensions.'
-          : raw
+      const normalized = normalizeProviderError(provider, raw, 'detail')
 
       setStage('error')
       setError(normalized)
@@ -237,6 +263,7 @@ export function PopupApp() {
   function handleClearLocalStorage(): void {
     window.localStorage.clear()
     setSettingsOpen(false)
+    setProvider('shopee')
     setSavedSummary(null)
     setResult(null)
     setError(null)
@@ -245,11 +272,19 @@ export function PopupApp() {
   }
 
   function handleClearSavedResults(): void {
-    window.localStorage.removeItem(SAVED_SUMMARY_KEY)
+    window.localStorage.removeItem(getSavedSummaryStorageKey(provider))
     setSavedSummary(null)
     setResult(null)
     setError(null)
     setStage('idle')
+  }
+
+  function handleProviderChange(nextProvider: PopupProvider): void {
+    if (nextProvider === provider || stage === 'running') {
+      return
+    }
+
+    setProvider(nextProvider)
   }
 
   function handleOpenFaq(): void {
@@ -261,6 +296,7 @@ export function PopupApp() {
   const totalSpent = savedSummary?.positiveSpend ?? 0
   const totalOrders = savedSummary?.orderCount ?? 0
   const lastUpdatedLabel = savedSummary ? formatLastUpdatedLabel(savedSummary.updatedAt, dateTimeFormatter) : null
+  const providerSteps = STEPS_BY_PROVIDER[provider]
 
   if (!policyReady) {
     return <main className="panel panel-popup" aria-busy="true" />
@@ -283,7 +319,7 @@ export function PopupApp() {
           </header>
 
           <p className="hero-copy policy-copy">
-            ImongSpend reads your Shopee purchase history from the active browser tab to calculate spending insights for you.
+            ImongSpend reads your Shopee or Lazada order history from the active browser tab to calculate spending insights for you.
           </p>
 
           <ul className="policy-list">
@@ -314,7 +350,7 @@ export function PopupApp() {
         <div className="brand-cluster">
           <img className="brand-logo" src="/imongspend-logo.png" alt="ImongSpend logo" />
           <div>
-            <p className="kicker">Shopee Order Calculator</p>
+            <p className="kicker">{PROVIDER_LABEL[provider]} Order Calculator</p>
             <h1>ImongSpend</h1>
           </div>
         </div>
@@ -327,6 +363,26 @@ export function PopupApp() {
           {settingsOpen ? 'Close' : 'Settings'}
         </button>
       </header>
+
+      <section className="glass-card settings-card" aria-label="Provider selection">
+        <p className="subhead">Provider</p>
+        <div className="provider-switch" role="group" aria-label="Provider selection">
+          <button
+            className={`provider-btn ${provider === 'shopee' ? 'provider-btn-active' : ''}`}
+            onClick={() => handleProviderChange('shopee')}
+            disabled={stage === 'running'}
+          >
+            Shopee
+          </button>
+          <button
+            className={`provider-btn ${provider === 'lazada' ? 'provider-btn-active' : ''}`}
+            onClick={() => handleProviderChange('lazada')}
+            disabled={stage === 'running'}
+          >
+            Lazada
+          </button>
+        </div>
+      </section>
 
       {settingsOpen ? (
         <section className="glass-card settings-card" aria-label="In-popup settings">
@@ -371,25 +427,20 @@ export function PopupApp() {
 
       {lastUpdatedLabel ? <p className="status-meta">{lastUpdatedLabel}</p> : null}
 
-      <button className="action-btn" onClick={() => void handleCalculate()} disabled={stage === 'running'}>
-        {stage === 'running' ? 'Calculating Spend...' : hasSavedSummary ? 'Recalculate My Spending' : 'Calculate My Spending'}
-      </button>
+      {!result ? (
+        <button className="action-btn" onClick={() => void handleCalculate()} disabled={stage === 'running'}>
+          {stage === 'running' ? 'Calculating Spend...' : hasSavedSummary ? 'Recalculate My Spending' : 'Calculate My Spending'}
+        </button>
+      ) : null}
 
       {error ? <p className="error-text">{error}</p> : null}
 
+      {stage === 'running' ? (
+        <p className="fineprint">Do not close this extension while calculating or fetching details.</p>
+      ) : null}
+
       {result ? (
         <section className="result-shell" aria-label="Calculation details">
-          <div className="stats-grid">
-            <article className="stat-chip">
-              <p>Completed orders</p>
-              <strong>{result.completedCount.toLocaleString()}</strong>
-            </article>
-            <article className="stat-chip">
-              <p>Estimated grand total</p>
-              <strong>{currency.format(result.estimatedGrandTotal)}</strong>
-            </article>
-          </div>
-
           <div className="button-row">
             <button className="download-btn" onClick={() => void handleDownloadCsv()} disabled={stage === 'running'}>
               {stage === 'running' ? 'Fetching details...' : 'Download CSV'}
@@ -404,7 +455,7 @@ export function PopupApp() {
       <section className="glass-card" aria-label="Steps">
         <p className="subhead">Steps</p>
         <ol className="step-list">
-          {STEPS.map((step) => (
+          {providerSteps.map((step) => (
             <li key={step}>{step}</li>
           ))}
         </ol>
@@ -423,7 +474,7 @@ export function PopupApp() {
   )
 }
 
-type RuntimeWithLastError = {
+  type RuntimeWithLastError = {
   runtime?: {
     lastError?: {
       message?: string
@@ -437,8 +488,8 @@ type RuntimeWithLastError = {
     sendMessage: (
       tabId: number,
       message:
-        | { type: 'IMONGSPEND_RESEARCH_CALCULATE'; payload: { maxPages: number } }
-        | { type: 'IMONGSPEND_FETCH_ORDER_DETAILS'; payload: { orderIds: string[] } },
+        | { type: 'IMONGSPEND_RESEARCH_CALCULATE'; payload: { maxPages: number; provider: PopupProvider } }
+        | { type: 'IMONGSPEND_FETCH_ORDER_DETAILS'; payload: { orderIds: string[]; provider: PopupProvider } },
       callback: (response?: unknown) => void,
     ) => void
   }
@@ -453,7 +504,7 @@ type RuntimeWithLastError = {
   }
 }
 
-async function getActiveTabId(): Promise<number> {
+async function getActiveTabId(provider: PopupProvider): Promise<number> {
   const chromeRef = (globalThis as { chrome?: RuntimeWithLastError }).chrome
   if (!chromeRef?.tabs?.query) {
     throw new Error('Chrome tabs API is unavailable in this context.')
@@ -467,21 +518,35 @@ async function getActiveTabId(): Promise<number> {
 
   const activeTab = tabs[0]
   if (!activeTab?.id) {
-    throw new Error('Open a Shopee tab first, then retry.')
+    throw new Error(`Open a ${PROVIDER_LABEL[provider]} tab first, then retry.`)
   }
 
-  if (!activeTab.url?.includes('shopee.')) {
-    throw new Error('Active tab is not Shopee. Open Shopee My Purchase page first.')
+  const tabUrl = activeTab.url ?? ''
+
+  if (provider === 'shopee') {
+    if (!tabUrl.includes('shopee.')) {
+      throw new Error('Active tab is not Shopee. Open Shopee My Purchase page first.')
+    }
+
+    if (!/\/user\/purchase/i.test(tabUrl)) {
+      throw new Error('Open Shopee My Purchase page first (URL should include /user/purchase), then retry.')
+    }
+
+    return activeTab.id
   }
 
-  if (!/\/user\/purchase/i.test(activeTab.url)) {
-    throw new Error('Open Shopee My Purchase page first (URL should include /user/purchase), then retry.')
+  if (!tabUrl.includes('lazada.')) {
+    throw new Error('Active tab is not Lazada. Open Lazada My Orders page first.')
+  }
+
+  if (!/\/customer\/order\/(index|view)\//i.test(tabUrl)) {
+    throw new Error('Open Lazada My Orders page first (URL should include /customer/order/index), then retry.')
   }
 
   return activeTab.id
 }
 
-async function sendResearchCalculation(tabId: number): Promise<CalculationResponse> {
+async function sendResearchCalculation(tabId: number, provider: PopupProvider): Promise<CalculationResponse> {
   const chromeRef = (globalThis as { chrome?: RuntimeWithLastError }).chrome
   if (!chromeRef?.tabs?.sendMessage) {
     throw new Error('Unable to communicate with active tab.')
@@ -490,7 +555,7 @@ async function sendResearchCalculation(tabId: number): Promise<CalculationRespon
   const failures: string[] = []
 
   try {
-    return await sendCalculationMessageOnce(chromeRef, tabId)
+    return await sendCalculationMessageOnce(chromeRef, tabId, provider)
   } catch (unknownError) {
     const message = unknownError instanceof Error ? unknownError.message : 'Initial tab message failed.'
     failures.push(message)
@@ -499,25 +564,26 @@ async function sendResearchCalculation(tabId: number): Promise<CalculationRespon
   try {
     await ensureContentScriptInjected(chromeRef, tabId)
     await sleep(120)
-    return await sendCalculationMessageOnce(chromeRef, tabId)
+    return await sendCalculationMessageOnce(chromeRef, tabId, provider)
   } catch (unknownError) {
     const message = unknownError instanceof Error ? unknownError.message : 'Script injection retry failed.'
     failures.push(message)
   }
 
-  throw new Error(formatTabConnectionError(failures))
+  throw new Error(formatTabConnectionError(provider, failures))
 }
 
 async function sendCalculationMessageOnce(
   chromeRef: RuntimeWithLastError,
   tabId: number,
+  provider: PopupProvider,
 ): Promise<CalculationResponse> {
   return new Promise<CalculationResponse>((resolve, reject) => {
     chromeRef.tabs?.sendMessage(
       tabId,
       {
         type: 'IMONGSPEND_RESEARCH_CALCULATE',
-        payload: { maxPages: 60 },
+        payload: { maxPages: 60, provider },
       },
       (response) => {
         const runtimeError = chromeRef.runtime?.lastError?.message
@@ -527,12 +593,12 @@ async function sendCalculationMessageOnce(
         }
 
         if (!response) {
-          reject(new Error('No response from Shopee page. Refresh and retry.'))
+          reject(new Error(`No response from ${PROVIDER_LABEL[provider]} page. Refresh and retry.`))
           return
         }
 
         if (typeof response !== 'object' || response === null || !('ok' in response)) {
-          reject(new Error('Malformed response from Shopee page.'))
+          reject(new Error(`Malformed response from ${PROVIDER_LABEL[provider]} page.`))
           return
         }
 
@@ -542,7 +608,11 @@ async function sendCalculationMessageOnce(
   })
 }
 
-async function sendOrderDetailsFetch(tabId: number, orderIds: string[]): Promise<DetailResponse> {
+async function sendOrderDetailsFetch(
+  tabId: number,
+  provider: PopupProvider,
+  orderIds: string[],
+): Promise<DetailResponse> {
   const chromeRef = (globalThis as { chrome?: RuntimeWithLastError }).chrome
   if (!chromeRef?.tabs?.sendMessage) {
     throw new Error('Unable to communicate with active tab.')
@@ -551,7 +621,7 @@ async function sendOrderDetailsFetch(tabId: number, orderIds: string[]): Promise
   const failures: string[] = []
 
   try {
-    return await sendOrderDetailsMessageOnce(chromeRef, tabId, orderIds)
+    return await sendOrderDetailsMessageOnce(chromeRef, tabId, provider, orderIds)
   } catch (unknownError) {
     const message = unknownError instanceof Error ? unknownError.message : 'Initial tab message failed.'
     failures.push(message)
@@ -560,18 +630,19 @@ async function sendOrderDetailsFetch(tabId: number, orderIds: string[]): Promise
   try {
     await ensureContentScriptInjected(chromeRef, tabId)
     await sleep(120)
-    return await sendOrderDetailsMessageOnce(chromeRef, tabId, orderIds)
+    return await sendOrderDetailsMessageOnce(chromeRef, tabId, provider, orderIds)
   } catch (unknownError) {
     const message = unknownError instanceof Error ? unknownError.message : 'Script injection retry failed.'
     failures.push(message)
   }
 
-  throw new Error(formatTabConnectionError(failures))
+  throw new Error(formatTabConnectionError(provider, failures))
 }
 
 async function sendOrderDetailsMessageOnce(
   chromeRef: RuntimeWithLastError,
   tabId: number,
+  provider: PopupProvider,
   orderIds: string[],
 ): Promise<DetailResponse> {
   return new Promise<DetailResponse>((resolve, reject) => {
@@ -579,7 +650,7 @@ async function sendOrderDetailsMessageOnce(
       tabId,
       {
         type: 'IMONGSPEND_FETCH_ORDER_DETAILS',
-        payload: { orderIds },
+        payload: { orderIds, provider },
       },
       (response) => {
         const runtimeError = chromeRef.runtime?.lastError?.message
@@ -589,12 +660,12 @@ async function sendOrderDetailsMessageOnce(
         }
 
         if (!response) {
-          reject(new Error('No detail response from Shopee page. Refresh and retry.'))
+          reject(new Error(`No detail response from ${PROVIDER_LABEL[provider]} page. Refresh and retry.`))
           return
         }
 
         if (typeof response !== 'object' || response === null || !('ok' in response)) {
-          reject(new Error('Malformed detail response from Shopee page.'))
+          reject(new Error(`Malformed detail response from ${PROVIDER_LABEL[provider]} page.`))
           return
         }
 
@@ -632,52 +703,135 @@ async function ensureContentScriptInjected(
 }
 
 function resultToCsv(result: ResearchCalculationResult): string {
+  const normalizedResult = recomputeResultMetrics(result)
+  const downloadedAt = new Date()
+  const downloadedAtLabel = formatUserFriendlyDateTime(downloadedAt)
   const lines: string[] = []
-  lines.push(
-    'order_id,ordered_at,status,shop_name,merchandise_subtotal,shipping_fee,shipping_discount_subtotal,shop_voucher_discount,order_total,payment_method,total_saved,amount,item_summary',
-  )
+  const orderHeaders = [
+    'order_id',
+    'ordered_at',
+    'status',
+    'shop_name',
+    'merchandise_subtotal',
+    'shipping_fee',
+    'shipping_discount_subtotal',
+    'shop_voucher_discount',
+    'order_total',
+    'payment_method',
+    'total_saved',
+    'amount',
+    'item_summary',
+  ]
+  const separatorHeader = ['']
+  const metricHeaders = ['core_metric', 'core_value']
+  lines.push([...orderHeaders, ...separatorHeader, ...metricHeaders].map(escapeCsv).join(','))
 
-  for (const row of result.rows) {
-    const cols = [
-      row.orderId,
-      row.orderedAt,
-      row.status,
-      row.shopName,
-      row.merchandiseSubtotal.toFixed(2),
-      row.shippingFee.toFixed(2),
-      row.shippingDiscountSubtotal.toFixed(2),
-      row.shopVoucherDiscount.toFixed(2),
-      row.orderTotal.toFixed(2),
-      row.paymentMethod,
-      row.totalSaved.toFixed(2),
-      row.amount.toFixed(2),
-      row.itemSummary,
-    ]
-    lines.push(cols.map(escapeCsv).join(','))
+  const sortedRows = sortRowsForCsv(normalizedResult.rows)
+
+  const orderRows = sortedRows.map((row) => [
+    row.orderId,
+    formatUserFriendlyOrderedAt(row.orderedAt),
+    row.status,
+    row.shopName,
+    row.merchandiseSubtotal.toFixed(2),
+    row.shippingFee.toFixed(2),
+    row.shippingDiscountSubtotal.toFixed(2),
+    row.shopVoucherDiscount.toFixed(2),
+    row.orderTotal.toFixed(2),
+    row.paymentMethod,
+    row.totalSaved.toFixed(2),
+    row.amount.toFixed(2),
+    formatCsvItemSummary(row.itemSummary),
+  ])
+
+  const coreMetricRows: string[][] = [
+    ['positive_spend', normalizedResult.positiveSpend.toFixed(2)],
+    ['order_count', String(normalizedResult.orderCount)],
+    ['completed_count', String(normalizedResult.completedCount)],
+    ['cancelled_count', String(normalizedResult.cancelledCount)],
+    ['total_saved', normalizedResult.totalSaved.toFixed(2)],
+    ['downloaded_at', downloadedAtLabel],
+  ]
+
+  const totalRows = Math.max(orderRows.length, coreMetricRows.length)
+  for (let index = 0; index < totalRows; index += 1) {
+    const orderCols =
+      orderRows[index] ??
+      [
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+      ]
+    const metricCols = coreMetricRows[index] ?? ['', '']
+    lines.push([...orderCols, '', ...metricCols].map(escapeCsv).join(','))
   }
 
-  lines.push('')
-  lines.push(`"positive_spend",${result.positiveSpend.toFixed(2)}`)
-  lines.push(`"total_saved",${result.totalSaved.toFixed(2)}`)
-  lines.push(`"total_adjustments",${result.totalAdjustments.toFixed(2)}`)
-  lines.push(`"estimated_grand_total",${result.estimatedGrandTotal.toFixed(2)}`)
-  lines.push(`"completed_count",${result.completedCount}`)
-  lines.push(`"cancelled_count",${result.cancelledCount}`)
-  lines.push(`"order_count",${result.orderCount}`)
-
   return lines.join('\n')
+}
+
+function sortRowsForCsv(rows: ResearchOrderRow[]): ResearchOrderRow[] {
+  return [...rows].sort((a, b) => {
+    const aTimestamp = parseOrderedAtTimestamp(a.orderedAt)
+    const bTimestamp = parseOrderedAtTimestamp(b.orderedAt)
+
+    if (aTimestamp !== null && bTimestamp !== null) {
+      return bTimestamp - aTimestamp
+    }
+
+    if (aTimestamp !== null) {
+      return -1
+    }
+
+    if (bTimestamp !== null) {
+      return 1
+    }
+
+    return b.orderId.localeCompare(a.orderId)
+  })
+}
+
+function parseOrderedAtTimestamp(value: string): number | null {
+  if (!value || value === 'unknown') {
+    return null
+  }
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return null
+  }
+
+  return parsed.getTime()
+}
+
+function formatCsvItemSummary(value: string): string {
+  const compact = value.replace(/\s+/g, ' ').trim()
+  if (compact.length <= 80) {
+    return compact
+  }
+
+  return `${compact.slice(0, 77).trimEnd()}...`
 }
 
 function escapeCsv(value: string): string {
   return `"${value.replaceAll('"', '""')}"`
 }
 
-function triggerCsvDownload(csv: string): void {
+function triggerCsvDownload(csv: string, provider: PopupProvider): void {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `imongspend-shopee-${Date.now()}.csv`
+  anchor.download = `imongspend-${provider}-${Date.now()}.csv`
   anchor.click()
   URL.revokeObjectURL(url)
 }
@@ -728,22 +882,88 @@ function mergeRowsWithDetails(rows: ResearchOrderRow[], enrichedRows: ResearchOr
   })
 }
 
+function recomputeResultMetrics(result: ResearchCalculationResult): ResearchCalculationResult {
+  const completedRows = result.rows.filter((row) => isCompletedStatusForMetrics(row.status))
+  const cancelledRows = result.rows.filter((row) => isCancelledStatusForMetrics(row.status))
+  const positiveSpend = sumMetrics(completedRows.map((row) => row.amount))
+  const totalSaved = sumMetrics(completedRows.map((row) => row.totalSaved))
+  const range = resolveResultDateRange(result.rows)
+
+  return {
+    ...result,
+    orderCount: result.rows.length,
+    completedCount: completedRows.length,
+    cancelledCount: cancelledRows.length,
+    positiveSpend,
+    totalSaved,
+    from: range.from,
+    to: range.to,
+  }
+}
+
+function resolveResultDateRange(rows: ResearchOrderRow[]): { from: string; to: string } {
+  const timestamps = rows
+    .map((row) => parseOrderedAtTimestamp(row.orderedAt))
+    .filter((value): value is number => value !== null)
+
+  if (timestamps.length === 0) {
+    const now = new Date().toISOString()
+    return { from: now, to: now }
+  }
+
+  const min = Math.min(...timestamps)
+  const max = Math.max(...timestamps)
+
+  return {
+    from: new Date(min).toISOString(),
+    to: new Date(max).toISOString(),
+  }
+}
+
+function isCompletedStatusForMetrics(status: string): boolean {
+  return /(label_completed|completed|complete|received|delivered|success|succeeded|\bpaid\b)/i.test(status)
+}
+
+function isCancelledStatusForMetrics(status: string): boolean {
+  return /(label_cancelled|label_canceled|cancelled|canceled|cancel|refund|refunded|returned|return)/i.test(status)
+}
+
+function sumMetrics(values: number[]): number {
+  return round2(values.reduce((acc, value) => acc + value, 0))
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100
+}
+
 function resultToSavedSummary(result: ResearchCalculationResult): SavedSummary {
   return {
     positiveSpend: result.positiveSpend,
+    totalSaved: result.totalSaved,
     orderCount: result.orderCount,
     completedCount: result.completedCount,
-    estimatedGrandTotal: result.estimatedGrandTotal,
+    cancelledCount: result.cancelledCount,
     updatedAt: new Date().toISOString(),
   }
 }
 
-function persistSavedSummary(summary: SavedSummary): void {
-  window.localStorage.setItem(SAVED_SUMMARY_KEY, JSON.stringify(summary))
+function persistSavedSummary(summary: SavedSummary, provider: PopupProvider): void {
+  window.localStorage.setItem(getSavedSummaryStorageKey(provider), JSON.stringify(summary))
 }
 
-function readSavedSummaryFromStorage(): SavedSummary | null {
-  const raw = window.localStorage.getItem(SAVED_SUMMARY_KEY)
+function readSavedSummaryFromStorage(provider: PopupProvider): SavedSummary | null {
+  const storageKey = getSavedSummaryStorageKey(provider)
+  const raw = window.localStorage.getItem(storageKey)
+
+  if (!raw && provider === 'shopee') {
+    const legacyRaw = window.localStorage.getItem(SAVED_SUMMARY_KEY)
+    if (legacyRaw) {
+      window.localStorage.setItem(storageKey, legacyRaw)
+      window.localStorage.removeItem(SAVED_SUMMARY_KEY)
+      return readSavedSummaryFromStorage(provider)
+    }
+  }
+
   if (!raw) {
     return null
   }
@@ -751,33 +971,45 @@ function readSavedSummaryFromStorage(): SavedSummary | null {
   try {
     const parsed = JSON.parse(raw) as Partial<SavedSummary>
     const positiveSpend = Number(parsed.positiveSpend)
+    const totalSaved = Number(parsed.totalSaved)
     const orderCount = Number(parsed.orderCount)
     const completedCount = Number(parsed.completedCount)
-    const estimatedGrandTotal = Number(parsed.estimatedGrandTotal)
+    const cancelledCount = Number(parsed.cancelledCount)
     const updatedAt = typeof parsed.updatedAt === 'string' ? parsed.updatedAt : ''
 
     if (
       !Number.isFinite(positiveSpend) ||
+      !Number.isFinite(totalSaved) ||
       !Number.isFinite(orderCount) ||
       !Number.isFinite(completedCount) ||
-      !Number.isFinite(estimatedGrandTotal) ||
+      !Number.isFinite(cancelledCount) ||
       updatedAt.length === 0
     ) {
-      window.localStorage.removeItem(SAVED_SUMMARY_KEY)
+      window.localStorage.removeItem(storageKey)
       return null
     }
 
     return {
       positiveSpend,
+      totalSaved,
       orderCount,
       completedCount,
-      estimatedGrandTotal,
+      cancelledCount,
       updatedAt,
     }
   } catch {
-    window.localStorage.removeItem(SAVED_SUMMARY_KEY)
+    window.localStorage.removeItem(storageKey)
     return null
   }
+}
+
+function getSavedSummaryStorageKey(provider: PopupProvider): string {
+  return `${SAVED_SUMMARY_KEY}.${provider}`
+}
+
+function readProviderFromStorage(): PopupProvider {
+  const raw = window.localStorage.getItem(PROVIDER_SELECTION_KEY)
+  return raw === 'lazada' ? 'lazada' : 'shopee'
 }
 
 function formatLastUpdatedLabel(updatedAt: string, formatter: Intl.DateTimeFormat): string {
@@ -789,28 +1021,82 @@ function formatLastUpdatedLabel(updatedAt: string, formatter: Intl.DateTimeForma
   return `Last updated: ${formatter.format(date)}`
 }
 
+function formatUserFriendlyOrderedAt(orderedAt: string): string {
+  if (orderedAt === 'unknown') {
+    return 'unknown'
+  }
+
+  const parsed = new Date(orderedAt)
+  if (Number.isNaN(parsed.getTime())) {
+    return orderedAt
+  }
+
+  return formatUserFriendlyDateTime(parsed)
+}
+
+function formatUserFriendlyDateTime(date: Date): string {
+  const day = String(date.getDate()).padStart(2, '0')
+  const month = MONTH_NAMES[date.getMonth()] ?? 'Jan'
+  const year = date.getFullYear()
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+  return `${day} ${month} ${year} ${hours}:${minutes}:${seconds}`
+}
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
 function isConnectionError(message: string): boolean {
   return /(receiving end does not exist|could not establish connection|no tab with id|message port closed|extension context invalidated)/i.test(
     message,
   )
 }
 
-function formatTabConnectionError(failures: string[]): string {
+function formatTabConnectionError(provider: PopupProvider, failures: string[]): string {
   const combined = failures.join(' | ')
+  const providerLabel = PROVIDER_LABEL[provider]
 
   if (/cannot access contents of url/i.test(combined)) {
-    return 'This Shopee page does not allow extension access yet. Open a regular Shopee purchase page tab, then retry.'
+    return `This ${providerLabel} page does not allow extension access yet. Open a regular ${providerLabel} orders page tab, then retry.`
   }
 
   if (/missing host permission/i.test(combined)) {
-    return 'This Shopee domain is not in extension permissions. Add the domain to manifest host_permissions and reload extension.'
+    return `This ${providerLabel} domain is not in extension permissions. Add the domain to manifest host_permissions and reload extension.`
   }
 
-  if (isConnectionError(combined) || /no response from shopee page/i.test(combined)) {
-    return 'Unable to connect to Shopee tab. Refresh Shopee My Purchase page and retry. If needed, reload extension in edge://extensions.'
+  if (isConnectionError(combined) || /no response from (shopee|lazada) page/i.test(combined)) {
+    return `Unable to connect to ${providerLabel} tab. Refresh ${providerLabel} orders page and retry. If needed, reload extension in edge://extensions.`
   }
 
-  return combined || 'Unable to connect to Shopee tab.'
+  return combined || `Unable to connect to ${providerLabel} tab.`
+}
+
+function normalizeProviderError(
+  provider: PopupProvider,
+  raw: string,
+  mode: 'calculate' | 'detail',
+): string {
+  if (/(403|forbidden|blocked|failed to fetch)/i.test(raw)) {
+    if (provider === 'shopee') {
+      return mode === 'detail'
+        ? 'Shopee blocked detail fetch. Keep My Purchase open, scroll once, disable blockers for Shopee, then retry.'
+        : 'Shopee blocked this request. Keep My Purchase open, scroll once, disable blockers for Shopee, then retry.'
+    }
+
+    return mode === 'detail'
+      ? 'Lazada blocked detail fetch. Keep My Orders open, scroll once, disable blockers for Lazada, then retry.'
+      : 'Lazada blocked this request. Keep My Orders open, scroll once, disable blockers for Lazada, then retry.'
+  }
+
+  if (isConnectionError(raw)) {
+    if (provider === 'shopee') {
+      return 'ImongSpend cannot reach this Shopee tab. Refresh Shopee, then retry. If it persists, reload extension in edge://extensions.'
+    }
+
+    return 'ImongSpend cannot reach this Lazada tab. Refresh Lazada, then retry. If it persists, reload extension in edge://extensions.'
+  }
+
+  return raw
 }
 
 function sleep(ms: number): Promise<void> {

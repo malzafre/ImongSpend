@@ -1,4 +1,4 @@
-export type SupportedProvider = 'shopee' | 'foodpanda' | 'grab'
+export type SupportedProvider = 'shopee' | 'lazada' | 'foodpanda' | 'grab'
 
 export interface SpendRecord {
   provider: SupportedProvider

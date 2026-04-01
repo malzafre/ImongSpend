@@ -35,6 +35,8 @@
 
 .topbar,
 .hero,
+.install-guide,
+.policy-page,
 .how,
 .faq,
 .footer {
@@ -45,6 +47,8 @@
 
 .topbar,
 .hero,
+.install-guide,
+.policy-page,
 .how,
 .faq,
 .footer {
@@ -64,7 +68,7 @@
   align-items: center;
   gap: 0.6rem;
   text-decoration: none;
-  color: var(--heading-color);
+  color: var(--accent);
   font-family: var(--font-heading);
   font-weight: 700;
   letter-spacing: -0.01em;
@@ -141,6 +145,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  appearance: none;
+  cursor: pointer;
   border-radius: 999px;
   font-weight: 700;
   text-decoration: none;
@@ -201,9 +207,152 @@
 }
 
 .how,
+.install-guide,
+.setup-page,
+.policy-page,
 .faq,
 .footer {
   padding: 1.45rem;
+}
+
+.setup-page {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 26px;
+  animation: rise 540ms ease-out;
+}
+
+.policy-page {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 26px;
+  animation: rise 540ms ease-out;
+}
+
+.policy-grid {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.policy-card {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.58);
+  padding: 0.95rem;
+}
+
+.policy-card h3 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 1.02rem;
+  color: var(--heading-color);
+}
+
+.policy-card p {
+  margin: 0.52rem 0 0;
+  color: var(--text-soft);
+}
+
+.setup-actions {
+  margin-top: 1rem;
+  display: flex;
+  gap: 0.72rem;
+  flex-wrap: wrap;
+}
+
+.setup-download-row {
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.setup-download-note {
+  margin: 0;
+  max-width: 52ch;
+}
+
+.browser-picker {
+  margin-top: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.56rem;
+}
+
+.browser-chip {
+  appearance: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--heading-color);
+  font-weight: 700;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+  transition: border-color 180ms ease, transform 180ms ease, background-color 180ms ease;
+}
+
+.browser-chip:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+.browser-chip.is-active {
+  background: linear-gradient(135deg, var(--accent-deep), var(--accent));
+  color: #f9ffff;
+  border-color: transparent;
+}
+
+.setup-support-note {
+  margin: 0.8rem 0 0;
+  padding: 0.72rem 0.82rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--text-soft);
+}
+
+.install-download-card {
+  margin-top: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.55);
+  padding: 0.95rem;
+  display: grid;
+  gap: 0.7rem;
+  justify-items: start;
+}
+
+.install-steps {
+  list-style: none;
+  margin: 0.95rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.install-step {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.55);
+  padding: 0.95rem;
+}
+
+.install-step h3 {
+  margin: 0.5rem 0 0;
+  font-family: var(--font-heading);
+  font-size: 1.02rem;
+  line-height: 1.2;
+  color: var(--heading-color);
+}
+
+.install-step p {
+  margin: 0.52rem 0 0;
+  color: var(--text-soft);
 }
 
 .section-head h2 {
@@ -300,6 +449,13 @@
   text-underline-offset: 2px;
 }
 
+.footer-links {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+}
+
 .page-credit {
   color: var(--text-soft);
   font-size: 0.85rem;
@@ -326,17 +482,26 @@
   }
 
   .topbar,
+  .install-guide,
+  .setup-page,
+  .policy-page,
   .how,
   .faq,
   .footer {
     border-radius: 20px;
   }
 
+  .policy-grid,
+  .install-steps,
   .step-grid {
     grid-template-columns: 1fr;
   }
 
   .hero-visual {
     order: -1;
+  }
+
+  .setup-download-row {
+    align-items: flex-start;
   }
 }
