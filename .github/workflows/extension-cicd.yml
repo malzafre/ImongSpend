@@ -83,6 +83,39 @@ jobs:
 
           latest_tag="$(git tag --merged HEAD --list 'v*' --sort=-version:refname | head -n 1)"
           head_tag="$(git tag --points-at HEAD --list 'v*' --sort=-version:refname | head -n 1)"
+          manifest_version="$(node -p \"JSON.parse(require('node:fs').readFileSync('apps/extension/public/manifest.json','utf8')).version\")"
+          package_version="$(node -p \"JSON.parse(require('node:fs').readFileSync('apps/extension/package.json','utf8')).version\")"
+
+          semver_regex='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+          semver_key() {
+            local version="$1"
+            local major minor patch
+            IFS='.' read -r major minor patch <<< "$version"
+            printf '%06d%06d%06d\n' "$major" "$minor" "$patch"
+          }
+
+          increment_patch() {
+            local version="$1"
+            local major minor patch
+            IFS='.' read -r major minor patch <<< "$version"
+            echo "${major}.${minor}.$((patch + 1))"
+          }
+
+          if [[ ! "$manifest_version" =~ $semver_regex ]]; then
+            echo "Invalid manifest version: $manifest_version" >&2
+            exit 1
+          fi
+
+          if [[ ! "$package_version" =~ $semver_regex ]]; then
+            echo "Invalid package version: $package_version" >&2
+            exit 1
+          fi
+
+          if [[ "$manifest_version" != "$package_version" ]]; then
+            echo "Version mismatch: manifest=$manifest_version package=$package_version" >&2
+            exit 1
+          fi
 
           if [[ -n "$head_tag" ]]; then
             echo "release_needed=false" >> "$GITHUB_OUTPUT"
@@ -91,18 +124,29 @@ jobs:
             exit 0
           fi
 
-          if [[ -z "$latest_tag" ]]; then
-            next_tag='v0.1.0'
-          else
-            version="${latest_tag#v}"
-            IFS='.' read -r major minor patch <<< "$version"
+          latest_version='0.0.0'
 
-            if [[ -z "$major" || -z "$minor" || -z "$patch" ]]; then
+          if [[ -n "$latest_tag" ]]; then
+            latest_version="${latest_tag#v}"
+
+            if [[ ! "$latest_version" =~ $semver_regex ]]; then
               echo "Unexpected tag format: $latest_tag" >&2
               exit 1
             fi
+          fi
 
-            next_tag="v${major}.${minor}.$((patch + 1))"
+          next_version="$(increment_patch "$latest_version")"
+
+          if [[ "$(semver_key "$manifest_version")" > "$(semver_key "$next_version")" ]]; then
+            next_version="$manifest_version"
+          fi
+
+          next_tag="v${next_version}"
+
+          if git rev-parse "$next_tag" >/dev/null 2>&1; then
+            echo "Tag already exists: $next_tag" >&2
+            echo "Bump extension version in apps/extension/public/manifest.json and apps/extension/package.json, then merge again." >&2
+            exit 1
           fi
 
           echo "release_needed=true" >> "$GITHUB_OUTPUT"
