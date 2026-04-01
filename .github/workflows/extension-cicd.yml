@@ -83,8 +83,8 @@ jobs:
 
           latest_tag="$(git tag --merged HEAD --list 'v*' --sort=-version:refname | head -n 1)"
           head_tag="$(git tag --points-at HEAD --list 'v*' --sort=-version:refname | head -n 1)"
-          manifest_version="$(node -p \"JSON.parse(require('node:fs').readFileSync('apps/extension/public/manifest.json','utf8')).version\")"
-          package_version="$(node -p \"JSON.parse(require('node:fs').readFileSync('apps/extension/package.json','utf8')).version\")"
+          manifest_version="$(node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync("apps/extension/public/manifest.json","utf8")).version)')"
+          package_version="$(node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync("apps/extension/package.json","utf8")).version)')"
 
           semver_regex='^[0-9]+\.[0-9]+\.[0-9]+$'
 
