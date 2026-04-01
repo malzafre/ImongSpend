@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ResearchCalculationResult, ResearchOrderRow } from '@shared/index'
 
 type Stage = 'idle' | 'running' | 'done' | 'error'
-type PopupProvider = 'shopee' | 'lazada'
+type PopupProvider = 'shopee' | 'lazada' | 'foodpanda'
 
 type CalculationResponse =
   | { ok: true; result: ResearchCalculationResult }
@@ -32,6 +32,11 @@ const STEPS_BY_PROVIDER: Record<PopupProvider, string[]> = {
     'Click Calculate My Spending to fetch and compute totals locally.',
     'Review totals and export CSV if needed.',
   ],
+  foodpanda: [
+    'Open Foodpanda order history in this browser.',
+    'Click Calculate My Spending to fetch and compute totals locally.',
+    'Review totals and export CSV if needed.',
+  ],
 }
 
 const POLICY_DECISION_KEY = 'imongspend.popup.policy.decision.v1'
@@ -44,6 +49,7 @@ const FAQ_URL = 'https://imongspend.hanscandor.tech/#faq'
 const PROVIDER_LABEL: Record<PopupProvider, string> = {
   shopee: 'Shopee',
   lazada: 'Lazada',
+  foodpanda: 'Foodpanda',
 }
 
 type PolicyDecision = 'pending' | 'accepted'
@@ -138,7 +144,11 @@ export function PopupApp() {
 
     try {
       const tabId = await getActiveTabId(provider)
-      const calculateTimeoutMs = provider === 'lazada' ? 4 * 60_000 : 30_000
+      const calculateTimeoutMs = provider === 'lazada'
+        ? 4 * 60_000
+        : provider === 'foodpanda'
+          ? 75_000
+          : 30_000
       const response = await withTimeout(
         sendResearchCalculation(tabId, provider),
         calculateTimeoutMs,
@@ -173,7 +183,7 @@ export function PopupApp() {
     setStage('running')
 
     try {
-      if (provider === 'lazada') {
+      if (provider === 'lazada' || provider === 'foodpanda') {
         triggerCsvDownload(resultToCsv(result), provider)
         setStage('done')
         return
@@ -319,7 +329,7 @@ export function PopupApp() {
           </header>
 
           <p className="hero-copy policy-copy">
-            ImongSpend reads your Shopee or Lazada order history from the active browser tab to calculate spending insights for you.
+            ImongSpend reads your Shopee, Lazada, or Foodpanda order history from the active browser tab to calculate spending insights for you.
           </p>
 
           <ul className="policy-list">
@@ -380,6 +390,13 @@ export function PopupApp() {
             disabled={stage === 'running'}
           >
             Lazada
+          </button>
+          <button
+            className={`provider-btn ${provider === 'foodpanda' ? 'provider-btn-active' : ''}`}
+            onClick={() => handleProviderChange('foodpanda')}
+            disabled={stage === 'running'}
+          >
+            Foodpanda
           </button>
         </div>
       </section>
@@ -530,6 +547,18 @@ async function getActiveTabId(provider: PopupProvider): Promise<number> {
 
     if (!/\/user\/purchase/i.test(tabUrl)) {
       throw new Error('Open Shopee My Purchase page first (URL should include /user/purchase), then retry.')
+    }
+
+    return activeTab.id
+  }
+
+  if (provider === 'foodpanda') {
+    if (!tabUrl.includes('foodpanda.')) {
+      throw new Error('Active tab is not Foodpanda. Open Foodpanda order history page first.')
+    }
+
+    if (!/(\/account\/orders|\/orders|order-history|order_history)/i.test(tabUrl)) {
+      throw new Error('Open Foodpanda order history page first, then retry.')
     }
 
     return activeTab.id
@@ -1009,7 +1038,15 @@ function getSavedSummaryStorageKey(provider: PopupProvider): string {
 
 function readProviderFromStorage(): PopupProvider {
   const raw = window.localStorage.getItem(PROVIDER_SELECTION_KEY)
-  return raw === 'lazada' ? 'lazada' : 'shopee'
+  if (raw === 'lazada') {
+    return 'lazada'
+  }
+
+  if (raw === 'foodpanda') {
+    return 'foodpanda'
+  }
+
+  return 'shopee'
 }
 
 function formatLastUpdatedLabel(updatedAt: string, formatter: Intl.DateTimeFormat): string {
@@ -1064,7 +1101,7 @@ function formatTabConnectionError(provider: PopupProvider, failures: string[]): 
     return `This ${providerLabel} domain is not in extension permissions. Add the domain to manifest host_permissions and reload extension.`
   }
 
-  if (isConnectionError(combined) || /no response from (shopee|lazada) page/i.test(combined)) {
+  if (isConnectionError(combined) || /no response from (shopee|lazada|foodpanda) page/i.test(combined)) {
     return `Unable to connect to ${providerLabel} tab. Refresh ${providerLabel} orders page and retry. If needed, reload extension in edge://extensions.`
   }
 
@@ -1083,6 +1120,12 @@ function normalizeProviderError(
         : 'Shopee blocked this request. Keep My Purchase open, scroll once, disable blockers for Shopee, then retry.'
     }
 
+    if (provider === 'foodpanda') {
+      return mode === 'detail'
+        ? 'Foodpanda blocked detail fetch. Keep order history open, scroll once, disable blockers for Foodpanda, then retry.'
+        : 'Foodpanda blocked this request. Keep order history open, scroll once, disable blockers for Foodpanda, then retry.'
+    }
+
     return mode === 'detail'
       ? 'Lazada blocked detail fetch. Keep My Orders open, scroll once, disable blockers for Lazada, then retry.'
       : 'Lazada blocked this request. Keep My Orders open, scroll once, disable blockers for Lazada, then retry.'
@@ -1091,6 +1134,10 @@ function normalizeProviderError(
   if (isConnectionError(raw)) {
     if (provider === 'shopee') {
       return 'ImongSpend cannot reach this Shopee tab. Refresh Shopee, then retry. If it persists, reload extension in edge://extensions.'
+    }
+
+    if (provider === 'foodpanda') {
+      return 'ImongSpend cannot reach this Foodpanda tab. Refresh Foodpanda, then retry. If it persists, reload extension in edge://extensions.'
     }
 
     return 'ImongSpend cannot reach this Lazada tab. Refresh Lazada, then retry. If it persists, reload extension in edge://extensions.'
