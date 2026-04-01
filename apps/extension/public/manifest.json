@@ -29,7 +29,22 @@
     "https://*.lazada.vn/*",
     "https://*.lazada.co.th/*",
     "https://*.foodpanda.ph/*",
-    "https://ph.fd-api.com/*"
+    "https://*.foodpanda.sg/*",
+    "https://*.foodpanda.com.my/*",
+    "https://*.foodpanda.my/*",
+    "https://*.foodpanda.co.th/*",
+    "https://*.foodpanda.th/*",
+    "https://*.foodpanda.com.tw/*",
+    "https://*.foodpanda.tw/*",
+    "https://*.foodpanda.hk/*",
+    "https://*.foodpanda.jp/*",
+    "https://*.foodpanda.pk/*",
+    "https://*.foodpanda.com.bd/*",
+    "https://*.foodpanda.bd/*",
+    "https://*.foodpanda.la/*",
+    "https://*.foodpanda.com.kh/*",
+    "https://*.foodpanda.kh/*",
+    "https://*.fd-api.com/*"
   ],
   "action": {
     "default_title": "ImongSpend",
@@ -63,7 +78,22 @@
         "https://*.lazada.sg/*",
         "https://*.lazada.vn/*",
         "https://*.lazada.co.th/*",
-        "https://*.foodpanda.ph/*"
+        "https://*.foodpanda.ph/*",
+        "https://*.foodpanda.sg/*",
+        "https://*.foodpanda.com.my/*",
+        "https://*.foodpanda.my/*",
+        "https://*.foodpanda.co.th/*",
+        "https://*.foodpanda.th/*",
+        "https://*.foodpanda.com.tw/*",
+        "https://*.foodpanda.tw/*",
+        "https://*.foodpanda.hk/*",
+        "https://*.foodpanda.jp/*",
+        "https://*.foodpanda.pk/*",
+        "https://*.foodpanda.com.bd/*",
+        "https://*.foodpanda.bd/*",
+        "https://*.foodpanda.la/*",
+        "https://*.foodpanda.com.kh/*",
+        "https://*.foodpanda.kh/*"
       ],
       "js": ["assets/content.js"],
       "run_at": "document_idle"
@@ -89,7 +119,22 @@
         "https://*.lazada.sg/*",
         "https://*.lazada.vn/*",
         "https://*.lazada.co.th/*",
-        "https://*.foodpanda.ph/*"
+        "https://*.foodpanda.ph/*",
+        "https://*.foodpanda.sg/*",
+        "https://*.foodpanda.com.my/*",
+        "https://*.foodpanda.my/*",
+        "https://*.foodpanda.co.th/*",
+        "https://*.foodpanda.th/*",
+        "https://*.foodpanda.com.tw/*",
+        "https://*.foodpanda.tw/*",
+        "https://*.foodpanda.hk/*",
+        "https://*.foodpanda.jp/*",
+        "https://*.foodpanda.pk/*",
+        "https://*.foodpanda.com.bd/*",
+        "https://*.foodpanda.bd/*",
+        "https://*.foodpanda.la/*",
+        "https://*.foodpanda.com.kh/*",
+        "https://*.foodpanda.kh/*"
       ]
     }
   ]

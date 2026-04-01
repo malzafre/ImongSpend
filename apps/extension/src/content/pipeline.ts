@@ -46,7 +46,8 @@ const ENDPOINT_GET_ORDER_LIST = '/api/v4/order/get_order_list'
 const LAZADA_SYNC_ORDER_LIST_ENDPOINT = '/customer/api/sync/order-list'
 const LAZADA_ASYNC_ORDER_LIST_ENDPOINT = '/customer/api/async/order-list'
 const LAZADA_ORDER_DETAIL_ENDPOINT = '/customer/api/sync/order-detail'
-const FOODPANDA_ORDER_HISTORY_ENDPOINT = 'https://ph.fd-api.com/api/v5/orders/order_history'
+const FOODPANDA_ORDER_HISTORY_PATH = '/api/v5/orders/order_history'
+const FOODPANDA_DEFAULT_MARKET = 'ph'
 const FOODPANDA_PAGE_SIZE = 20
 
 const lazadaOrderContextById = new Map<string, LazadaOrderContext>()
@@ -621,7 +622,8 @@ function storeLazadaOrderContexts(contexts: LazadaOrderContext[]): void {
 async function fetchFoodpandaOrderHistory(offset: number, limit: number): Promise<Record<string, unknown>> {
   const normalizedOffset = Math.max(0, Math.floor(offset))
   const normalizedLimit = Math.max(1, Math.floor(limit))
-  const requestUrl = `${FOODPANDA_ORDER_HISTORY_ENDPOINT}?language_id=1&offset=${normalizedOffset}&limit=${normalizedLimit}&item_replacement=true&include=order_products,order_details`
+  const marketCode = resolveFoodpandaMarketCode(window.location.hostname) ?? FOODPANDA_DEFAULT_MARKET
+  const requestUrl = `https://${marketCode}.fd-api.com${FOODPANDA_ORDER_HISTORY_PATH}?language_id=1&offset=${normalizedOffset}&limit=${normalizedLimit}&item_replacement=true&include=order_products,order_details`
 
   const headers: Record<string, string> = {
     accept: 'application/json, text/plain, */*',
@@ -646,10 +648,39 @@ async function fetchFoodpandaOrderHistory(offset: number, limit: number): Promis
       throw new Error('Foodpanda API authorization failed. Open Foodpanda orders page while logged in, then retry.')
     }
 
-    throw new Error(`Foodpanda API returned HTTP ${response.status}.`)
+    throw new Error(`Foodpanda API returned HTTP ${response.status} for market ${marketCode}.`)
   }
 
   return (await response.json()) as Record<string, unknown>
+}
+
+function resolveFoodpandaMarketCode(hostname: string): string | null {
+  const normalizedHost = hostname.trim().toLowerCase()
+  if (!normalizedHost) {
+    return null
+  }
+
+  const nestedDomainMatch = normalizedHost.match(/foodpanda\.(?:com|co)\.([a-z]{2})$/)
+  if (nestedDomainMatch?.[1]) {
+    return nestedDomainMatch[1]
+  }
+
+  const simpleDomainMatch = normalizedHost.match(/foodpanda\.([a-z]{2})$/)
+  if (simpleDomainMatch?.[1]) {
+    return simpleDomainMatch[1]
+  }
+
+  const segments = normalizedHost.split('.').filter((segment) => segment.length > 0)
+  if (segments.length === 0) {
+    return null
+  }
+
+  const tld = segments[segments.length - 1]
+  if (tld && /^[a-z]{2}$/.test(tld)) {
+    return tld
+  }
+
+  return null
 }
 
 async function fetchPage(url: string): Promise<Record<string, unknown>> {
