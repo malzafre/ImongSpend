@@ -5,7 +5,7 @@
 ImongSpend is a browser extension + landing page project for estimating marketplace spending without manual spreadsheet work.
 
 Current focus:
-- Supported providers in extension UI: Shopee and Lazada
+- Supported providers in extension UI: Shopee, Lazada, and Foodpanda
 - Landing page download/install flow for latest GitHub release
 - Browser-first processing and local saved summaries
 
@@ -120,7 +120,7 @@ If you see `Manifest file is missing or unreadable`, you likely selected the wro
 
 ### Basic in-product flow
 
-1. Open your Shopee or Lazada orders page.
+1. Open your Shopee, Lazada, or Foodpanda orders page.
 2. Open the ImongSpend extension popup.
 3. Click **Calculate My Spending**.
 4. Review totals and optionally export CSV.

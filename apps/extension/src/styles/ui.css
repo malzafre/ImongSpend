@@ -392,7 +392,7 @@ h2 {
 .provider-switch {
   margin-top: 0.56rem;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.4rem;
 }
 
@@ -514,6 +514,12 @@ h2 {
   line-height: 1;
   letter-spacing: -0.02em;
   color: #0d6670;
+}
+
+.metric-meta {
+  margin: 0.36rem 0 0;
+  font-size: 0.75rem;
+  color: var(--ink-soft);
 }
 
 .stats-grid {

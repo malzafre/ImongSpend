@@ -4,6 +4,11 @@ import {
   mapLazadaListModuleToRows,
   type LazadaOrderContext,
 } from './lazadaMapper'
+import {
+  extractFoodpandaItems,
+  extractFoodpandaTotalCount,
+  mapFoodpandaOrderToRow,
+} from './foodpandaMapper'
 import { extractDetails, extractNextOffset, mapOrderToRow, type OrderSource } from './orderMapper'
 
 type RuntimeLike = {
@@ -23,7 +28,7 @@ type CollectionResult = {
   notes: string[]
 }
 
-export type ResearchProvider = 'shopee' | 'lazada'
+export type ResearchProvider = 'shopee' | 'lazada' | 'foodpanda'
 
 type EndpointConfig = {
   key: 'order_list' | 'all_order_list'
@@ -41,6 +46,9 @@ const ENDPOINT_GET_ORDER_LIST = '/api/v4/order/get_order_list'
 const LAZADA_SYNC_ORDER_LIST_ENDPOINT = '/customer/api/sync/order-list'
 const LAZADA_ASYNC_ORDER_LIST_ENDPOINT = '/customer/api/async/order-list'
 const LAZADA_ORDER_DETAIL_ENDPOINT = '/customer/api/sync/order-detail'
+const FOODPANDA_ORDER_HISTORY_PATH = '/api/v5/orders/order_history'
+const FOODPANDA_DEFAULT_MARKET = 'ph'
+const FOODPANDA_PAGE_SIZE = 20
 
 const lazadaOrderContextById = new Map<string, LazadaOrderContext>()
 
@@ -50,6 +58,10 @@ export async function collectRowsForProvider(
 ): Promise<CollectionResult> {
   if (provider === 'lazada') {
     return collectLazadaRowsViaContentApi(maxPages)
+  }
+
+  if (provider === 'foodpanda') {
+    return collectFoodpandaRowsViaContentApi(maxPages)
   }
 
   return collectRowsViaPageBridge(maxPages)
@@ -63,6 +75,10 @@ export async function collectRowsFallbackForProvider(
     return collectLazadaRowsViaContentApi(maxPages)
   }
 
+  if (provider === 'foodpanda') {
+    return collectFoodpandaRowsViaContentApi(maxPages)
+  }
+
   return collectRowsViaContentApi(maxPages)
 }
 
@@ -72,6 +88,10 @@ export async function collectOrderDetailsForProvider(
 ): Promise<ResearchOrderRow[]> {
   if (provider === 'lazada') {
     return collectLazadaOrderDetailsViaContentApi(orderIds)
+  }
+
+  if (provider === 'foodpanda') {
+    return []
   }
 
   return collectOrderDetailsViaPageBridge(orderIds)
@@ -280,6 +300,59 @@ export async function collectRowsViaContentApi(maxPages: number): Promise<Collec
   }
 
   throw new Error(errors.join(' | ') || 'No API rows returned.')
+}
+
+async function collectFoodpandaRowsViaContentApi(maxPages: number): Promise<CollectionResult> {
+  const rows: ResearchOrderRow[] = []
+  const seenOrderIds = new Set<string>()
+  let offset = 0
+  let page = 0
+  let totalCount: number | null = null
+
+  while (page < maxPages) {
+    const body = await fetchFoodpandaOrderHistory(offset, FOODPANDA_PAGE_SIZE)
+    const items = extractFoodpandaItems(body)
+    if (items.length === 0) {
+      break
+    }
+
+    const reportedTotalCount = extractFoodpandaTotalCount(body)
+    if (reportedTotalCount !== null) {
+      totalCount = reportedTotalCount
+    }
+
+    for (const item of items) {
+      const row = mapFoodpandaOrderToRow(item)
+      if (seenOrderIds.has(row.orderId)) {
+        continue
+      }
+
+      seenOrderIds.add(row.orderId)
+      rows.push(row)
+    }
+
+    offset += items.length
+    page += 1
+
+    if (items.length < FOODPANDA_PAGE_SIZE) {
+      break
+    }
+
+    if (totalCount !== null && offset >= totalCount) {
+      break
+    }
+
+    await sleep(240)
+  }
+
+  if (rows.length === 0) {
+    throw new Error('No Foodpanda order history rows were returned from the current account.')
+  }
+
+  return {
+    rows,
+    notes: [],
+  }
 }
 
 export async function withStageTimeout<T>(
@@ -546,6 +619,70 @@ function storeLazadaOrderContexts(contexts: LazadaOrderContext[]): void {
   }
 }
 
+async function fetchFoodpandaOrderHistory(offset: number, limit: number): Promise<Record<string, unknown>> {
+  const normalizedOffset = Math.max(0, Math.floor(offset))
+  const normalizedLimit = Math.max(1, Math.floor(limit))
+  const marketCode = resolveFoodpandaMarketCode(window.location.hostname) ?? FOODPANDA_DEFAULT_MARKET
+  const requestUrl = `https://${marketCode}.fd-api.com${FOODPANDA_ORDER_HISTORY_PATH}?language_id=1&offset=${normalizedOffset}&limit=${normalizedLimit}&item_replacement=true&include=order_products,order_details`
+
+  const headers: Record<string, string> = {
+    accept: 'application/json, text/plain, */*',
+    'x-fp-api-key': 'volo',
+  }
+
+  const authToken = extractFoodpandaAuthToken()
+  if (!authToken) {
+    throw new Error('Foodpanda auth token not found. Refresh Foodpanda orders page, then retry.')
+  }
+
+  headers.authorization = `Bearer ${authToken}`
+
+  const response = await fetch(requestUrl, {
+    method: 'GET',
+    credentials: 'omit',
+    headers,
+  })
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('Foodpanda API authorization failed. Open Foodpanda orders page while logged in, then retry.')
+    }
+
+    throw new Error(`Foodpanda API returned HTTP ${response.status} for market ${marketCode}.`)
+  }
+
+  return (await response.json()) as Record<string, unknown>
+}
+
+function resolveFoodpandaMarketCode(hostname: string): string | null {
+  const normalizedHost = hostname.trim().toLowerCase()
+  if (!normalizedHost) {
+    return null
+  }
+
+  const nestedDomainMatch = normalizedHost.match(/foodpanda\.(?:com|co)\.([a-z]{2})$/)
+  if (nestedDomainMatch?.[1]) {
+    return nestedDomainMatch[1]
+  }
+
+  const simpleDomainMatch = normalizedHost.match(/foodpanda\.([a-z]{2})$/)
+  if (simpleDomainMatch?.[1]) {
+    return simpleDomainMatch[1]
+  }
+
+  const segments = normalizedHost.split('.').filter((segment) => segment.length > 0)
+  if (segments.length === 0) {
+    return null
+  }
+
+  const tld = segments[segments.length - 1]
+  if (tld && /^[a-z]{2}$/.test(tld)) {
+    return tld
+  }
+
+  return null
+}
+
 async function fetchPage(url: string): Promise<Record<string, unknown>> {
   const headers: Record<string, string> = {
     accept: 'application/json, text/plain, */*',
@@ -613,6 +750,249 @@ async function ensurePageBridge(): Promise<void> {
 function extractCookieValue(name: string): string | null {
   const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]+)`))
   return match?.[1] ?? null
+}
+
+function extractFoodpandaAuthToken(): string | null {
+  const tokenCandidates = new Set<string>()
+
+  const collectFromRaw = (raw: string | null): void => {
+    for (const candidate of extractPossibleTokens(raw)) {
+      tokenCandidates.add(candidate)
+    }
+  }
+
+  const storages: Array<Storage | null> = []
+
+  try {
+    storages.push(window.localStorage)
+  } catch {
+    void 0
+  }
+
+  try {
+    storages.push(window.sessionStorage)
+  } catch {
+    void 0
+  }
+
+  const exactKeyCandidates = [
+    'token',
+    'accessToken',
+    'access_token',
+    'authToken',
+    'auth_token',
+    'authorization',
+  ]
+
+  for (const storage of storages) {
+    if (!storage) {
+      continue
+    }
+
+    for (const key of exactKeyCandidates) {
+      const value = storage.getItem(key)
+      collectFromRaw(value)
+    }
+
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index)
+      if (!key) {
+        continue
+      }
+
+      const lower = key.toLowerCase()
+      if (!lower.includes('token') && !lower.includes('auth')) {
+        continue
+      }
+
+      const value = storage.getItem(key)
+      collectFromRaw(value)
+    }
+  }
+
+  const cookiePairs = document.cookie
+    .split(';')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.includes('='))
+
+  for (const pair of cookiePairs) {
+    const separator = pair.indexOf('=')
+    const key = pair.slice(0, separator).trim().toLowerCase()
+    if (!key.includes('token') && !key.includes('auth')) {
+      continue
+    }
+
+    const rawValue = pair.slice(separator + 1).trim()
+    const decodedValue = safeDecodeURIComponent(rawValue)
+    collectFromRaw(decodedValue)
+  }
+
+  if (tokenCandidates.size === 0) {
+    return null
+  }
+
+  return pickBestFoodpandaToken(Array.from(tokenCandidates))
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function extractPossibleTokens(raw: string | null): string[] {
+  const tokens = new Set<string>()
+
+  if (!raw) {
+    return []
+  }
+
+  const direct = raw.trim().replace(/^Bearer\s+/i, '')
+  if (looksLikeJwt(direct)) {
+    tokens.add(direct)
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    collectPossibleTokensFromUnknown(parsed, tokens, 0)
+  } catch {
+    return Array.from(tokens)
+  }
+
+  return Array.from(tokens)
+}
+
+function collectPossibleTokensFromUnknown(value: unknown, tokens: Set<string>, depth: number): void {
+  if (depth > 4 || value === null || value === undefined) {
+    return
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().replace(/^Bearer\s+/i, '')
+    if (looksLikeJwt(normalized)) {
+      tokens.add(normalized)
+    }
+    return
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectPossibleTokensFromUnknown(item, tokens, depth + 1)
+    }
+    return
+  }
+
+  if (typeof value !== 'object') {
+    return
+  }
+
+  const object = value as Record<string, unknown>
+  const directKeys = ['access_token', 'accessToken', 'token', 'authToken', 'authorization', 'idToken']
+
+  for (const key of directKeys) {
+    collectPossibleTokensFromUnknown(object[key], tokens, depth + 1)
+  }
+
+  for (const [key, item] of Object.entries(object)) {
+    const lowerKey = key.toLowerCase()
+    if (lowerKey.includes('token') || lowerKey.includes('auth') || lowerKey.includes('bearer')) {
+      collectPossibleTokensFromUnknown(item, tokens, depth + 1)
+    }
+  }
+}
+
+function pickBestFoodpandaToken(candidates: string[]): string | null {
+  let bestToken: string | null = null
+  let bestScore = Number.NEGATIVE_INFINITY
+
+  for (const candidate of candidates) {
+    const score = scoreFoodpandaToken(candidate)
+    if (score > bestScore) {
+      bestScore = score
+      bestToken = candidate
+    }
+  }
+
+  if (bestToken) {
+    return bestToken
+  }
+
+  return candidates[0] ?? null
+}
+
+function scoreFoodpandaToken(token: string): number {
+  const payload = parseJwtPayload(token)
+  if (!payload) {
+    return 1
+  }
+
+  let score = 0
+
+  const clientId = asString(payload.client_id)
+  if (clientId === 'volo') {
+    score += 100
+  }
+
+  const scope = asString(payload.scope)
+  if (scope && /API_CUSTOMER/i.test(scope)) {
+    score += 60
+  }
+
+  const userId = asString(payload.user_id)
+  if (userId) {
+    score += 15
+  }
+
+  const expires = asNumber(payload.expires) ?? asNumber(payload.exp)
+  if (expires !== null) {
+    const nowSeconds = Date.now() / 1000
+    if (expires > nowSeconds) {
+      score += 20
+    } else {
+      score -= 120
+    }
+  }
+
+  return score
+}
+
+function parseJwtPayload(token: string): Record<string, unknown> | null {
+  const parts = token.split('.')
+  if (parts.length !== 3) {
+    return null
+  }
+
+  const payloadPart = parts[1]
+  if (!payloadPart) {
+    return null
+  }
+
+  const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/')
+  const padLength = (4 - (normalized.length % 4)) % 4
+  const padded = normalized.padEnd(normalized.length + padLength, '=')
+
+  try {
+    const decoded = atob(padded)
+    const parsed = JSON.parse(decoded) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null
+    }
+
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function looksLikeJwt(value: string): boolean {
+  if (!value) {
+    return false
+  }
+
+  const parts = value.split('.')
+  return parts.length === 3 && parts.every((part) => part.length > 0)
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

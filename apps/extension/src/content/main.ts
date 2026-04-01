@@ -85,7 +85,11 @@ async function runResearchCalculation(
 ): Promise<ResearchCalculationResult> {
   const maxPages = clampMaxPages(maxPagesInput)
   const notes: string[] = []
-  const stageTimeoutMs = provider === 'lazada' ? Math.max(90_000, maxPages * 2_400) : 12_000
+  const stageTimeoutMs = provider === 'lazada'
+    ? Math.max(90_000, maxPages * 2_400)
+    : provider === 'foodpanda'
+      ? Math.max(35_000, maxPages * 1_250)
+      : 12_000
   let collectedRows: ResearchOrderRow[] = []
 
   try {
@@ -102,7 +106,7 @@ async function runResearchCalculation(
   } catch (error) {
     void error
     
-    const fallbackTimeoutMs = provider === 'lazada' ? stageTimeoutMs : 8_000
+    const fallbackTimeoutMs = provider === 'lazada' || provider === 'foodpanda' ? stageTimeoutMs : 8_000
     const apiResult = await withStageTimeout(
       collectRowsFallbackForProvider(provider, maxPages),
       fallbackTimeoutMs,
@@ -127,7 +131,15 @@ function clampMaxPages(input: number | undefined): number {
 }
 
 function normalizeProvider(value: unknown): ResearchProvider {
-  return value === 'lazada' ? 'lazada' : 'shopee'
+  if (value === 'lazada') {
+    return 'lazada'
+  }
+
+  if (value === 'foodpanda') {
+    return 'foodpanda'
+  }
+
+  return 'shopee'
 }
 
-console.info('[ImongSpend] Content script ready (Shopee + Lazada calculator mode).')
+console.info('[ImongSpend] Content script ready (Shopee + Lazada + Foodpanda calculator mode).')
